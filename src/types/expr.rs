@@ -1,5 +1,7 @@
 //! Expression type checking
 
+#![allow(clippy::too_many_lines, clippy::option_if_let_else)]
+
 use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, Span, Type, UnaryOp};
 use crate::errors::CompileError;
 use miette::Result;
@@ -70,7 +72,15 @@ impl TypeChecker {
 
             // OOP Expressions
             ExprKind::New { class_name, args } => self.check_new(class_name, args)?,
-            ExprKind::This => (ExprKind::This, Type::SelfType),
+            ExprKind::This => {
+                // Resolve $this type to current class
+                let this_type = if let Some(class_name) = &self.current_class {
+                    Type::Class(class_name.clone())
+                } else {
+                    Type::SelfType
+                };
+                (ExprKind::This, this_type)
+            }
             ExprKind::PropertyAccess { object, property } => {
                 self.check_property_access(object, property)?
             }
@@ -82,13 +92,20 @@ impl TypeChecker {
             ExprKind::StaticPropertyAccess {
                 class_name,
                 property,
-            } => (
-                ExprKind::StaticPropertyAccess {
-                    class_name: class_name.clone(),
-                    property: property.clone(),
-                },
-                Type::Unknown,
-            ),
+            } => {
+                // Look up property type from class registry
+                let prop_ty = self
+                    .class_registry
+                    .get_property(class_name, property)
+                    .map_or(Type::Unknown, |p| p.ty.clone());
+                (
+                    ExprKind::StaticPropertyAccess {
+                        class_name: class_name.clone(),
+                        property: property.clone(),
+                    },
+                    prop_ty,
+                )
+            }
             ExprKind::StaticMethodCall {
                 class_name,
                 method,
@@ -99,6 +116,22 @@ impl TypeChecker {
                 property,
                 value,
             } => self.check_property_assign(object, property, value)?,
+            ExprKind::StaticPropertyAssign {
+                class_name,
+                property,
+                value,
+            } => {
+                let typed_value = self.check_expr(value)?;
+                let value_ty = typed_value.ty.clone().unwrap_or(Type::Unknown);
+                (
+                    ExprKind::StaticPropertyAssign {
+                        class_name: class_name.clone(),
+                        property: property.clone(),
+                        value: Box::new(typed_value),
+                    },
+                    value_ty,
+                )
+            }
             ExprKind::ArrayLit(elements) => self.check_array_lit(elements)?,
             ExprKind::ArrayAccess { array, index } => self.check_array_access(array, index)?,
         };
@@ -243,10 +276,79 @@ impl TypeChecker {
     }
 
     fn check_new(&mut self, class_name: &str, args: &[Expr]) -> Result<(ExprKind, Type)> {
-        let mut typed_args = Vec::new();
-        for arg in args {
-            typed_args.push(self.check_expr(arg)?);
+        // Check class exists
+        if !self.class_registry.class_exists(class_name) {
+            return Err(CompileError::TypeError {
+                message: format!("Class '{class_name}' not found"),
+                span: Span::default().into(),
+            }
+            .into());
         }
+
+        // Check if class is abstract
+        if let Some(class_info) = self.class_registry.get_class(class_name) {
+            if class_info.is_abstract {
+                return Err(CompileError::TypeError {
+                    message: format!("Cannot instantiate abstract class '{class_name}'"),
+                    span: Span::default().into(),
+                }
+                .into());
+            }
+        }
+
+        // Get constructor parameter types
+        let constructor_params: Option<Vec<Type>> = self
+            .class_registry
+            .get_constructor(class_name)
+            .map(|c| c.params.iter().map(|(_, ty)| ty.clone()).collect());
+
+        // Type check constructor arguments
+        let mut typed_args = Vec::new();
+        if let Some(param_types) = constructor_params {
+            if args.len() != param_types.len() {
+                return Err(CompileError::TypeError {
+                    message: format!(
+                        "Constructor of '{}' expects {} arguments, got {}",
+                        class_name,
+                        param_types.len(),
+                        args.len()
+                    ),
+                    span: Span::default().into(),
+                }
+                .into());
+            }
+
+            for (arg, expected_ty) in args.iter().zip(param_types.iter()) {
+                let typed = self.check_expr(arg)?;
+                let arg_ty = typed.ty.clone().unwrap_or(Type::Unknown);
+
+                if !self.types_compatible(expected_ty, &arg_ty) {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Constructor argument type mismatch: expected {expected_ty}, found {arg_ty}"
+                        ),
+                        span: arg.span.into(),
+                    }
+                    .into());
+                }
+
+                typed_args.push(typed);
+            }
+        } else {
+            // No constructor - no args expected
+            if !args.is_empty() {
+                return Err(CompileError::TypeError {
+                    message: format!(
+                        "Class '{}' has no constructor but {} arguments were provided",
+                        class_name,
+                        args.len()
+                    ),
+                    span: Span::default().into(),
+                }
+                .into());
+            }
+        }
+
         Ok((
             ExprKind::New {
                 class_name: class_name.to_string(),
@@ -262,12 +364,42 @@ impl TypeChecker {
         property: &str,
     ) -> Result<(ExprKind, Type)> {
         let object_typed = self.check_expr(object)?;
+        let object_ty = object_typed.ty.clone().unwrap_or(Type::Unknown);
+
+        let property_ty = if let Type::Class(class_name) = &object_ty {
+            if let Some(prop_info) = self.class_registry.get_property(class_name, property) {
+                // Check visibility
+                self.check_visibility(class_name, prop_info.visibility, object.span)?;
+
+                // Check not accessing static property via instance
+                if prop_info.is_static {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Cannot access static property '{property}' via instance, use {class_name}::${property}"
+                        ),
+                        span: object.span.into(),
+                    }
+                    .into());
+                }
+
+                prop_info.ty.clone()
+            } else {
+                return Err(CompileError::TypeError {
+                    message: format!("Property '{property}' not found in class '{class_name}'"),
+                    span: object.span.into(),
+                }
+                .into());
+            }
+        } else {
+            Type::Unknown
+        };
+
         Ok((
             ExprKind::PropertyAccess {
                 object: Box::new(object_typed),
                 property: property.to_string(),
             },
-            Type::Unknown,
+            property_ty,
         ))
     }
 
@@ -278,17 +410,91 @@ impl TypeChecker {
         args: &[Expr],
     ) -> Result<(ExprKind, Type)> {
         let object_typed = self.check_expr(object)?;
-        let mut typed_args = Vec::new();
-        for arg in args {
-            typed_args.push(self.check_expr(arg)?);
-        }
+        let object_ty = object_typed.ty.clone().unwrap_or(Type::Unknown);
+
+        let (typed_args, return_ty) = if let Type::Class(class_name) = &object_ty {
+            // Extract method info before mutable borrow
+            let method_data = self.class_registry.get_method(class_name, method).map(|m| {
+                (
+                    m.visibility,
+                    m.is_static,
+                    m.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+                    m.return_type.clone(),
+                )
+            });
+
+            if let Some((visibility, is_static, param_types, return_type)) = method_data {
+                // Check visibility
+                self.check_visibility(class_name, visibility, object.span)?;
+
+                // Check not calling static method via instance
+                if is_static {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Cannot call static method '{method}' via instance, use {class_name}::{method}()"
+                        ),
+                        span: object.span.into(),
+                    }
+                    .into());
+                }
+
+                // Check argument count
+                if args.len() != param_types.len() {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Method '{}' expects {} arguments, got {}",
+                            method,
+                            param_types.len(),
+                            args.len()
+                        ),
+                        span: object.span.into(),
+                    }
+                    .into());
+                }
+
+                // Type check arguments
+                let mut typed = Vec::new();
+                for (arg, expected_ty) in args.iter().zip(param_types.iter()) {
+                    let arg_typed = self.check_expr(arg)?;
+                    let arg_ty = arg_typed.ty.clone().unwrap_or(Type::Unknown);
+
+                    if !self.types_compatible(expected_ty, &arg_ty) {
+                        return Err(CompileError::TypeError {
+                            message: format!(
+                                "Method argument type mismatch: expected {expected_ty}, found {arg_ty}"
+                            ),
+                            span: arg.span.into(),
+                        }
+                        .into());
+                    }
+
+                    typed.push(arg_typed);
+                }
+
+                (typed, return_type)
+            } else {
+                return Err(CompileError::TypeError {
+                    message: format!("Method '{method}' not found in class '{class_name}'"),
+                    span: object.span.into(),
+                }
+                .into());
+            }
+        } else {
+            // Unknown type - just type check args
+            let mut typed = Vec::new();
+            for arg in args {
+                typed.push(self.check_expr(arg)?);
+            }
+            (typed, Type::Unknown)
+        };
+
         Ok((
             ExprKind::MethodCall {
                 object: Box::new(object_typed),
                 method: method.to_string(),
                 args: typed_args,
             },
-            Type::Unknown,
+            return_ty,
         ))
     }
 
@@ -298,17 +504,110 @@ impl TypeChecker {
         method: &str,
         args: &[Expr],
     ) -> Result<(ExprKind, Type)> {
-        let mut typed_args = Vec::new();
-        for arg in args {
-            typed_args.push(self.check_expr(arg)?);
+        // Handle parent:: calls
+        let resolved_class = if class_name == "parent" {
+            if let Some(current) = &self.current_class {
+                if let Some(class_info) = self.class_registry.get_class(current) {
+                    class_info.parent.clone().ok_or_else(|| CompileError::TypeError {
+                        message: "Cannot use parent:: - class has no parent".to_string(),
+                        span: Span::default().into(),
+                    })?
+                } else {
+                    return Err(CompileError::TypeError {
+                        message: "Cannot use parent:: outside of class".to_string(),
+                        span: Span::default().into(),
+                    }
+                    .into());
+                }
+            } else {
+                return Err(CompileError::TypeError {
+                    message: "Cannot use parent:: outside of class".to_string(),
+                    span: Span::default().into(),
+                }
+                .into());
+            }
+        } else {
+            class_name.to_string()
+        };
+
+        // Check class exists
+        if !self.class_registry.class_exists(&resolved_class) {
+            return Err(CompileError::TypeError {
+                message: format!("Class '{resolved_class}' not found"),
+                span: Span::default().into(),
+            }
+            .into());
         }
+
+        // Extract method info before mutable borrow
+        let method_data = self
+            .class_registry
+            .get_method(&resolved_class, method)
+            .map(|m| {
+                (
+                    m.visibility,
+                    m.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+                    m.return_type.clone(),
+                )
+            });
+
+        let (typed_args, return_ty) = if let Some((visibility, param_types, return_type)) =
+            method_data
+        {
+            // Check visibility
+            self.check_visibility(&resolved_class, visibility, Span::default())?;
+
+            // Check argument count
+            if args.len() != param_types.len() {
+                return Err(CompileError::TypeError {
+                    message: format!(
+                        "Method '{}::{}' expects {} arguments, got {}",
+                        resolved_class,
+                        method,
+                        param_types.len(),
+                        args.len()
+                    ),
+                    span: Span::default().into(),
+                }
+                .into());
+            }
+
+            let mut typed = Vec::new();
+            for (arg, expected_ty) in args.iter().zip(param_types.iter()) {
+                let arg_typed = self.check_expr(arg)?;
+                let arg_ty = arg_typed.ty.clone().unwrap_or(Type::Unknown);
+
+                if !self.types_compatible(expected_ty, &arg_ty) {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Static method argument type mismatch: expected {expected_ty}, found {arg_ty}"
+                        ),
+                        span: arg.span.into(),
+                    }
+                    .into());
+                }
+
+                typed.push(arg_typed);
+            }
+
+            (typed, return_type)
+        } else {
+            return Err(CompileError::TypeError {
+                message: format!(
+                    "Static method '{method}' not found in class '{resolved_class}'"
+                ),
+                span: Span::default().into(),
+            }
+            .into());
+        };
+
         Ok((
             ExprKind::StaticMethodCall {
-                class_name: class_name.to_string(),
+                class_name: resolved_class,
                 method: method.to_string(),
                 args: typed_args,
             },
-            Type::Unknown,
+            return_ty,
         ))
     }
 
@@ -320,7 +619,35 @@ impl TypeChecker {
     ) -> Result<(ExprKind, Type)> {
         let object_typed = self.check_expr(object)?;
         let value_typed = self.check_expr(value)?;
+        let object_ty = object_typed.ty.clone().unwrap_or(Type::Unknown);
         let value_ty = value_typed.ty.clone().unwrap_or(Type::Unknown);
+
+        // Check property exists and types match
+        if let Type::Class(class_name) = &object_ty {
+            if let Some(prop_info) = self.class_registry.get_property(class_name, property) {
+                // Check visibility
+                self.check_visibility(class_name, prop_info.visibility, object.span)?;
+
+                // Check type compatibility
+                if !self.types_compatible(&prop_info.ty, &value_ty) {
+                    return Err(CompileError::TypeError {
+                        message: format!(
+                            "Cannot assign {} to property '{}' of type {}",
+                            value_ty, property, prop_info.ty
+                        ),
+                        span: value.span.into(),
+                    }
+                    .into());
+                }
+            } else {
+                return Err(CompileError::TypeError {
+                    message: format!("Property '{property}' not found in class '{class_name}'"),
+                    span: object.span.into(),
+                }
+                .into());
+            }
+        }
+
         Ok((
             ExprKind::PropertyAssign {
                 object: Box::new(object_typed),

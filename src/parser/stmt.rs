@@ -166,6 +166,14 @@ impl Parser {
 
     pub(super) fn parse_variable_stmt_no_semi(&mut self) -> Result<Stmt> {
         let start = self.span();
+
+        // Check if this is a property access ($var->...) or array access ($var[...])
+        // If so, parse as expression statement
+        if self.peek_ahead(1) == TokenKind::Arrow || self.peek_ahead(1) == TokenKind::LBracket {
+            let expr = self.parse_expr()?;
+            return Ok(Stmt::new(StmtKind::Expr(expr), start.merge(self.span())));
+        }
+
         let name_token = self.expect(TokenKind::Variable)?;
         let name = name_token.text[1..].to_string();
 

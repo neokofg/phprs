@@ -5,7 +5,10 @@
     clippy::match_same_arms,
     clippy::unnecessary_wraps,
     clippy::wrong_self_convention,
-    clippy::ref_option
+    clippy::ref_option,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::manual_let_else
 )]
 
 use std::collections::HashMap;
@@ -16,6 +19,8 @@ use cranelift_object::ObjectModule;
 
 use crate::ast::{BinaryOp, Expr, ExprKind, Stmt, StmtKind, Type, UnaryOp};
 use crate::errors::CompileError;
+use crate::types::ClassRegistry;
+use super::class::ClassCodeGen;
 use miette::Result;
 
 pub struct FunctionCompiler<'a, 'b> {
@@ -26,6 +31,9 @@ pub struct FunctionCompiler<'a, 'b> {
     pub functions: &'a HashMap<String, FuncId>,
     pub data_id_counter: &'a mut u32,
     pub terminated: bool,
+    pub current_class: Option<String>,
+    pub class_registry: Option<&'a ClassRegistry>,
+    pub class_codegen: Option<&'a ClassCodeGen>,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -43,6 +51,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             functions,
             data_id_counter,
             terminated: false,
+            current_class: None,
+            class_registry: None,
+            class_codegen: None,
         }
     }
 
@@ -329,15 +340,35 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             ExprKind::PrefixOp { op, target } => self.compile_prefix_op(*op, target),
             ExprKind::PostfixOp { op, target } => self.compile_postfix_op(*op, target),
             // OOP expressions
-            ExprKind::New { .. } => self.compile_new(),
+            ExprKind::New { class_name, args } => self.compile_new_expr(class_name, args),
             ExprKind::This => self.compile_this(),
-            ExprKind::PropertyAccess { object, .. } => self.compile_property_access(object),
-            ExprKind::MethodCall { object, args, .. } => self.compile_method_call(object, args),
-            ExprKind::StaticPropertyAccess { .. } => self.compile_static_property(),
-            ExprKind::StaticMethodCall { args, .. } => self.compile_static_method(args),
-            ExprKind::PropertyAssign { object, value, .. } => {
-                self.compile_property_assign(object, value)
+            ExprKind::PropertyAccess { object, property } => {
+                self.compile_property_access_expr(object, property)
             }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+            } => self.compile_method_call_expr(object, method, args),
+            ExprKind::StaticPropertyAccess {
+                class_name,
+                property,
+            } => self.compile_static_property_expr(class_name, property),
+            ExprKind::StaticMethodCall {
+                class_name,
+                method,
+                args,
+            } => self.compile_static_method_expr(class_name, method, args),
+            ExprKind::PropertyAssign {
+                object,
+                property,
+                value,
+            } => self.compile_property_assign_expr(object, property, value),
+            ExprKind::StaticPropertyAssign {
+                class_name,
+                property,
+                value,
+            } => self.compile_static_property_assign_expr(class_name, property, value),
             ExprKind::ArrayLit(elements) => self.compile_array_lit(elements),
             ExprKind::ArrayAccess { array, index } => self.compile_array_access(array, index),
         }
@@ -449,48 +480,406 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         Ok(current)
     }
 
-    // OOP placeholder implementations
-    fn compile_new(&mut self) -> Result<Value> {
+    // OOP implementations
+
+    /// Compile `new ClassName(args...)` expression
+    fn compile_new_expr(&mut self, class_name: &str, args: &[Expr]) -> Result<Value> {
         let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
+
+        // Get class info
+        let class_info = self
+            .class_registry
+            .and_then(|r| r.get_class(class_name))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!("Class '{class_name}' not found"),
+            })?;
+
+        let object_size = class_info.object_size;
+
+        // 1. Allocate memory: malloc(size)
+        let malloc_id = *self.functions.get("malloc").ok_or_else(|| {
+            CompileError::CodegenError {
+                message: "malloc not found".to_string(),
+            }
+        })?;
+
+        let malloc_ref = self.module.declare_func_in_func(malloc_id, self.builder.func);
+        let size_val = self.builder.ins().iconst(types::I64, object_size as i64);
+        let malloc_call = self.builder.ins().call(malloc_ref, &[size_val]);
+        let object_ptr = self.builder.inst_results(malloc_call)[0];
+
+        // 2. Store vtable pointer at offset 0
+        if let Some(class_codegen) = self.class_codegen {
+            if let Some(vtable_id) = class_codegen.get_vtable(class_name) {
+                let vtable_local = self.module.declare_data_in_func(vtable_id, self.builder.func);
+                let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_local);
+                self.builder
+                    .ins()
+                    .store(MemFlags::new(), vtable_ptr, object_ptr, 0);
+            }
+        }
+
+        // 3. Initialize properties with default values (zero)
+        // Properties are after vtable pointer (offset 8)
+        if let Some(registry) = self.class_registry {
+            if let Some(info) = registry.get_class(class_name) {
+                for prop in &info.properties {
+                    if !prop.is_static {
+                        let offset = prop.offset as i32;
+                        let default_val = self.default_value(&prop.ty);
+                        self.builder
+                            .ins()
+                            .store(MemFlags::new(), default_val, object_ptr, offset);
+                    }
+                }
+            }
+        }
+
+        // 4. Call constructor if exists (search up the hierarchy)
+        let constructor_name = self.find_constructor(class_name);
+        if let Some(ctor_name) = constructor_name {
+            if let Some(&func_id) = self.functions.get(&ctor_name) {
+                let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+
+                // Compile constructor arguments
+                let mut call_args = vec![object_ptr]; // $this is first arg
+                for arg in args {
+                    call_args.push(self.compile_expr(arg)?);
+                }
+
+                self.builder.ins().call(func_ref, &call_args);
+            }
+        }
+
+        Ok(object_ptr)
     }
 
+    /// Find constructor in class hierarchy
+    fn find_constructor(&self, class_name: &str) -> Option<String> {
+        let registry = self.class_registry?;
+
+        let mut current = class_name.to_string();
+        loop {
+            let ctor_name = format!("{current}___construct");
+            if self.functions.contains_key(&ctor_name) {
+                return Some(ctor_name);
+            }
+
+            // Try parent class
+            if let Some(class_info) = registry.get_class(&current) {
+                if let Some(parent) = &class_info.parent {
+                    current = parent.clone();
+                    continue;
+                }
+            }
+            break;
+        }
+
+        None
+    }
+
+    /// Compile `$this` reference
     fn compile_this(&mut self) -> Result<Value> {
-        let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
-    }
-
-    fn compile_property_access(&mut self, object: &Expr) -> Result<Value> {
-        let _obj = self.compile_expr(object)?;
-        let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
-    }
-
-    fn compile_method_call(&mut self, object: &Expr, args: &[Expr]) -> Result<Value> {
-        let _obj = self.compile_expr(object)?;
-        for arg in args {
-            let _ = self.compile_expr(arg)?;
+        if let Some(&var) = self.variables.get("this") {
+            Ok(self.builder.use_var(var))
+        } else {
+            Err(CompileError::CodegenError {
+                message: "$this used outside of class method".to_string(),
+            }
+            .into())
         }
-        let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
     }
 
-    fn compile_static_property(&mut self) -> Result<Value> {
-        let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
-    }
-
-    fn compile_static_method(&mut self, args: &[Expr]) -> Result<Value> {
-        for arg in args {
-            let _ = self.compile_expr(arg)?;
+    /// Resolve class name from type, handling `SelfType` and `StaticType`
+    fn resolve_class_name(&self, ty: Option<&Type>) -> Option<String> {
+        match ty {
+            Some(Type::Class(name)) => Some(name.clone()),
+            Some(Type::SelfType | Type::StaticType) => self.current_class.clone(),
+            _ => None,
         }
-        let ptr_ty = self.module.target_config().pointer_type();
-        Ok(self.builder.ins().iconst(ptr_ty, 0))
     }
 
-    fn compile_property_assign(&mut self, object: &Expr, value: &Expr) -> Result<Value> {
-        let _obj = self.compile_expr(object)?;
+    /// Compile `$obj->property` access
+    fn compile_property_access_expr(
+        &mut self,
+        object: &Expr,
+        property: &str,
+    ) -> Result<Value> {
+        let obj_ptr = self.compile_expr(object)?;
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        // Get class name from expression type
+        let class_name = self.resolve_class_name(object.ty.as_ref())
+            .ok_or_else(|| CompileError::CodegenError {
+                message: "Cannot access property on non-object".to_string(),
+            })?;
+
+        // Get property info
+        let prop_info = self
+            .class_registry
+            .and_then(|r| r.get_property(&class_name, property))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!("Property '{property}' not found in class '{class_name}'"),
+            })?;
+
+        let offset = prop_info.offset as i32;
+        let value_ty = ClassCodeGen::cranelift_type(&prop_info.ty, ptr_ty);
+
+        // Load value from object + offset
+        let value = self
+            .builder
+            .ins()
+            .load(value_ty, MemFlags::new(), obj_ptr, offset);
+
+        Ok(value)
+    }
+
+    /// Compile `$obj->method(args...)` call
+    fn compile_method_call_expr(
+        &mut self,
+        object: &Expr,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<Value> {
+        let obj_ptr = self.compile_expr(object)?;
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        // Get class name from expression type
+        let class_name = self.resolve_class_name(object.ty.as_ref())
+            .ok_or_else(|| CompileError::CodegenError {
+                message: "Cannot call method on non-object".to_string(),
+            })?;
+
+        // Get method info - clone to avoid borrow issues
+        let method_info = self
+            .class_registry
+            .and_then(|r| r.get_method(&class_name, method))
+            .cloned()
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!("Method '{method}' not found in class '{class_name}'"),
+            })?;
+
+        // Compile arguments
+        let mut call_args = vec![obj_ptr]; // $this is first argument
+        for arg in args {
+            call_args.push(self.compile_expr(arg)?);
+        }
+
+        // Check if this class has subclasses (potential for polymorphism)
+        // Use vtable dispatch for all virtual methods
+        if let Some(vtable_idx) = method_info.vtable_index {
+            // Virtual method call through vtable
+            // 1. Load vtable pointer from object (offset 0)
+            let vtable_ptr = self
+                .builder
+                .ins()
+                .load(ptr_ty, MemFlags::new(), obj_ptr, 0);
+
+            // 2. Load method pointer from vtable
+            let method_offset = (vtable_idx * ptr_ty.bytes() as usize) as i32;
+            let method_ptr = self
+                .builder
+                .ins()
+                .load(ptr_ty, MemFlags::new(), vtable_ptr, method_offset);
+
+            // 3. Build signature for indirect call
+            let mut sig = self.module.make_signature();
+            sig.params.push(AbiParam::new(ptr_ty)); // $this
+            for (_, ty) in &method_info.params {
+                sig.params
+                    .push(AbiParam::new(ClassCodeGen::cranelift_type(ty, ptr_ty)));
+            }
+            if method_info.return_type != Type::Void {
+                sig.returns.push(AbiParam::new(ClassCodeGen::cranelift_type(
+                    &method_info.return_type,
+                    ptr_ty,
+                )));
+            }
+
+            let sig_ref = self.builder.import_signature(sig);
+
+            // 4. Make indirect call
+            let call = self
+                .builder
+                .ins()
+                .call_indirect(sig_ref, method_ptr, &call_args);
+            let results = self.builder.inst_results(call);
+
+            if results.is_empty() {
+                Ok(self.builder.ins().iconst(types::I64, 0))
+            } else {
+                Ok(results[0])
+            }
+        } else {
+            // Static method or no vtable - direct call
+            let mangled_name = method_info.mangled_name;
+            let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
+                CompileError::CodegenError {
+                    message: format!("Method {mangled_name} not found"),
+                }
+            })?;
+
+            let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+            let call = self.builder.ins().call(func_ref, &call_args);
+            let results = self.builder.inst_results(call);
+
+            if results.is_empty() {
+                Ok(self.builder.ins().iconst(types::I64, 0))
+            } else {
+                Ok(results[0])
+            }
+        }
+    }
+
+    /// Compile `ClassName::$property` access
+    fn compile_static_property_expr(
+        &mut self,
+        class_name: &str,
+        property: &str,
+    ) -> Result<Value> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        // Get static property data
+        let data_id = self
+            .class_codegen
+            .and_then(|c| c.get_static_property(class_name, property))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!(
+                    "Static property '{class_name}::${property}' not found"
+                ),
+            })?;
+
+        // Get property type
+        let prop_info = self
+            .class_registry
+            .and_then(|r| r.get_property(class_name, property))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!("Property '{property}' not found in class '{class_name}'"),
+            })?;
+
+        let value_ty = ClassCodeGen::cranelift_type(&prop_info.ty, ptr_ty);
+
+        // Load value from global data
+        let data_local = self.module.declare_data_in_func(data_id, self.builder.func);
+        let data_ptr = self.builder.ins().symbol_value(ptr_ty, data_local);
+        let value = self
+            .builder
+            .ins()
+            .load(value_ty, MemFlags::new(), data_ptr, 0);
+
+        Ok(value)
+    }
+
+    /// Compile `ClassName::$property = value` assignment
+    fn compile_static_property_assign_expr(
+        &mut self,
+        class_name: &str,
+        property: &str,
+        value: &Expr,
+    ) -> Result<Value> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        // Compile the value
         let val = self.compile_expr(value)?;
+
+        // Get static property data
+        let data_id = self
+            .class_codegen
+            .and_then(|c| c.get_static_property(class_name, property))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!(
+                    "Static property '{class_name}::${property}' not found"
+                ),
+            })?;
+
+        // Store value to global data
+        let data_local = self.module.declare_data_in_func(data_id, self.builder.func);
+        let data_ptr = self.builder.ins().symbol_value(ptr_ty, data_local);
+        self.builder
+            .ins()
+            .store(MemFlags::new(), val, data_ptr, 0);
+
+        Ok(val)
+    }
+
+    /// Compile `ClassName::method(args...)` call
+    /// This handles both static methods and `parent::method()` calls
+    fn compile_static_method_expr(
+        &mut self,
+        class_name: &str,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<Value> {
+        let mangled_name = format!("{class_name}_{method}");
+        let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
+            CompileError::CodegenError {
+                message: format!("Static method {class_name}::{method} not found"),
+            }
+        })?;
+
+        let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
+
+        // Check if the method is non-static (needs $this)
+        let is_static_method = self
+            .class_registry
+            .and_then(|r| r.get_method(class_name, method))
+            .is_none_or(|m| m.is_static);
+
+        // Compile arguments
+        let mut call_args = Vec::new();
+
+        // If calling non-static method (like parent::__construct), pass $this first
+        if !is_static_method {
+            if let Some(&this_var) = self.variables.get("this") {
+                call_args.push(self.builder.use_var(this_var));
+            }
+        }
+
+        for arg in args {
+            call_args.push(self.compile_expr(arg)?);
+        }
+
+        let call = self.builder.ins().call(func_ref, &call_args);
+        let results = self.builder.inst_results(call);
+
+        if results.is_empty() {
+            Ok(self.builder.ins().iconst(types::I64, 0))
+        } else {
+            Ok(results[0])
+        }
+    }
+
+    /// Compile `$obj->property = value` assignment
+    fn compile_property_assign_expr(
+        &mut self,
+        object: &Expr,
+        property: &str,
+        value: &Expr,
+    ) -> Result<Value> {
+        let obj_ptr = self.compile_expr(object)?;
+        let val = self.compile_expr(value)?;
+
+        // Get class name from expression type
+        let class_name = self.resolve_class_name(object.ty.as_ref())
+            .ok_or_else(|| CompileError::CodegenError {
+                message: "Cannot assign property on non-object".to_string(),
+            })?;
+
+        // Get property info
+        let prop_info = self
+            .class_registry
+            .and_then(|r| r.get_property(&class_name, property))
+            .ok_or_else(|| CompileError::CodegenError {
+                message: format!("Property '{property}' not found in class '{class_name}'"),
+            })?;
+
+        let offset = prop_info.offset as i32;
+
+        // Store value at object + offset
+        self.builder
+            .ins()
+            .store(MemFlags::new(), val, obj_ptr, offset);
+
         Ok(val)
     }
 
@@ -720,5 +1109,63 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
             _ => self.builder.ins().iconst(types::I64, 0),
         }
+    }
+
+    /// Emit vtable initialization code at the start of `main()`
+    pub fn emit_vtable_init(
+        &mut self,
+        all_functions: &HashMap<String, FuncId>,
+    ) -> Result<()> {
+        let ptr_ty = self.module.target_config().pointer_type();
+        let ptr_size = ptr_ty.bytes() as usize;
+
+        let registry = match self.class_registry {
+            Some(r) => r,
+            None => return Ok(()),
+        };
+
+        let codegen = match self.class_codegen {
+            Some(c) => c,
+            None => return Ok(()),
+        };
+
+        for class_info in registry.all_classes() {
+            if class_info.vtable_layout.is_empty() {
+                continue;
+            }
+
+            // Get vtable data address
+            let vtable_id = match codegen.get_vtable(&class_info.name) {
+                Some(id) => id,
+                None => continue,
+            };
+
+            let vtable_ref = self
+                .module
+                .declare_data_in_func(vtable_id, self.builder.func);
+            let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_ref);
+
+            // Fill in each vtable slot with the function address
+            for (idx, method_name) in class_info.vtable_layout.iter().enumerate() {
+                // Find the actual implementation
+                let mangled_name =
+                    codegen.find_method_impl(&class_info.name, method_name, registry);
+
+                if let Some(&func_id) = all_functions.get(&mangled_name) {
+                    let func_ref = self
+                        .module
+                        .declare_func_in_func(func_id, self.builder.func);
+                    let func_addr = self.builder.ins().func_addr(ptr_ty, func_ref);
+
+                    // Store function address in vtable
+                    let offset = (idx * ptr_size) as i32;
+                    self.builder
+                        .ins()
+                        .store(MemFlags::new(), func_addr, vtable_ptr, offset);
+                }
+            }
+        }
+
+        Ok(())
     }
 }

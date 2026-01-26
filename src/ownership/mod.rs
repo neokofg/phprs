@@ -392,6 +392,10 @@ impl OwnershipChecker {
                 // Static access doesn't involve ownership
             }
 
+            ExprKind::StaticPropertyAssign { value, .. } => {
+                self.check_expr(value, true)?;
+            }
+
             ExprKind::StaticMethodCall { args, .. } => {
                 for arg in args {
                     self.check_expr(arg, true)?;

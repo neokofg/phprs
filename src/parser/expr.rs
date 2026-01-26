@@ -285,6 +285,27 @@ impl Parser {
                 self.advance();
                 Ok(Expr::new(ExprKind::This, start))
             }
+            TokenKind::Parent => {
+                // parent::method() call
+                self.advance();
+                self.expect(TokenKind::DoubleColon)?;
+
+                let method_token = self.expect(TokenKind::Identifier)?;
+                let method = method_token.text.clone();
+
+                self.expect(TokenKind::LParen)?;
+                let args = self.parse_call_args()?;
+                self.expect(TokenKind::RParen)?;
+
+                Ok(Expr::new(
+                    ExprKind::StaticMethodCall {
+                        class_name: "parent".to_string(),
+                        method,
+                        args,
+                    },
+                    start.merge(self.span()),
+                ))
+            }
             TokenKind::Variable => self.parse_variable_expr(start, &token.text),
             TokenKind::New => self.parse_new_expr(start),
             TokenKind::Identifier => self.parse_identifier_expr(start, &token.text),
@@ -348,6 +369,21 @@ impl Parser {
             if self.check(TokenKind::Variable) {
                 let var_token = self.advance().clone();
                 let property = var_token.text[1..].to_string();
+
+                // Check for assignment
+                if self.check(TokenKind::Assign) {
+                    self.advance();
+                    let value = self.parse_expr()?;
+                    return Ok(Expr::new(
+                        ExprKind::StaticPropertyAssign {
+                            class_name: name,
+                            property,
+                            value: Box::new(value),
+                        },
+                        start.merge(self.span()),
+                    ));
+                }
+
                 return Ok(Expr::new(
                     ExprKind::StaticPropertyAccess {
                         class_name: name,

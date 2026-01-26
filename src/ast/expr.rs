@@ -114,6 +114,13 @@ pub enum ExprKind {
         value: Box<Expr>,
     },
 
+    /// Static property assignment: `ClassName::$property` = expr
+    StaticPropertyAssign {
+        class_name: String,
+        property: String,
+        value: Box<Expr>,
+    },
+
     /// Array literal: [1, 2, 3] or ["a" => 1, "b" => 2]
     ArrayLit(Vec<ArrayElement>),
 
