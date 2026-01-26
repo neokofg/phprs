@@ -276,20 +276,27 @@ impl TypeChecker {
     }
 
     fn check_new(&mut self, class_name: &str, args: &[Expr]) -> Result<(ExprKind, Type)> {
-        // Check class exists
-        if !self.class_registry.class_exists(class_name) {
+        // Resolve class name through imports/namespace
+        let resolved_class = self.resolve_type_name(class_name);
+
+        // Check class exists (try resolved name first, then original)
+        let actual_class = if self.class_registry.class_exists(&resolved_class) {
+            resolved_class
+        } else if self.class_registry.class_exists(class_name) {
+            class_name.to_string()
+        } else {
             return Err(CompileError::TypeError {
                 message: format!("Class '{class_name}' not found"),
                 span: Span::default().into(),
             }
             .into());
-        }
+        };
 
         // Check if class is abstract
-        if let Some(class_info) = self.class_registry.get_class(class_name) {
+        if let Some(class_info) = self.class_registry.get_class(&actual_class) {
             if class_info.is_abstract {
                 return Err(CompileError::TypeError {
-                    message: format!("Cannot instantiate abstract class '{class_name}'"),
+                    message: format!("Cannot instantiate abstract class '{actual_class}'"),
                     span: Span::default().into(),
                 }
                 .into());
@@ -299,7 +306,7 @@ impl TypeChecker {
         // Get constructor parameter types
         let constructor_params: Option<Vec<Type>> = self
             .class_registry
-            .get_constructor(class_name)
+            .get_constructor(&actual_class)
             .map(|c| c.params.iter().map(|(_, ty)| ty.clone()).collect());
 
         // Type check constructor arguments
@@ -309,7 +316,7 @@ impl TypeChecker {
                 return Err(CompileError::TypeError {
                     message: format!(
                         "Constructor of '{}' expects {} arguments, got {}",
-                        class_name,
+                        actual_class,
                         param_types.len(),
                         args.len()
                     ),
@@ -340,7 +347,7 @@ impl TypeChecker {
                 return Err(CompileError::TypeError {
                     message: format!(
                         "Class '{}' has no constructor but {} arguments were provided",
-                        class_name,
+                        actual_class,
                         args.len()
                     ),
                     span: Span::default().into(),
@@ -351,10 +358,10 @@ impl TypeChecker {
 
         Ok((
             ExprKind::New {
-                class_name: class_name.to_string(),
+                class_name: actual_class.clone(),
                 args: typed_args,
             },
-            Type::Class(class_name.to_string()),
+            Type::Class(actual_class),
         ))
     }
 
@@ -458,10 +465,12 @@ impl TypeChecker {
                     let arg_typed = self.check_expr(arg)?;
                     let arg_ty = arg_typed.ty.clone().unwrap_or(Type::Unknown);
 
-                    if !self.types_compatible(expected_ty, &arg_ty) {
+                    // Resolve expected type for comparison
+                    let resolved_expected = self.resolve_type(&expected_ty);
+                    if !self.types_compatible(&resolved_expected, &arg_ty) {
                         return Err(CompileError::TypeError {
                             message: format!(
-                                "Method argument type mismatch: expected {expected_ty}, found {arg_ty}"
+                                "Method argument type mismatch: expected {resolved_expected}, found {arg_ty}"
                             ),
                             span: arg.span.into(),
                         }
@@ -471,7 +480,9 @@ impl TypeChecker {
                     typed.push(arg_typed);
                 }
 
-                (typed, return_type)
+                // Resolve return type
+                let resolved_return = self.resolve_type(&return_type);
+                (typed, resolved_return)
             } else {
                 return Err(CompileError::TypeError {
                     message: format!("Method '{method}' not found in class '{class_name}'"),

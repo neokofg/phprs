@@ -1,10 +1,40 @@
-use super::{ClassDef, Expr, Span, Type};
+use super::{ClassDef, CompilationUnit, Expr, Span, TraitDef, Type};
 
-/// A complete program
+/// A complete program (all files combined)
 #[derive(Debug, Clone)]
 pub struct Program {
+    /// All compilation units
+    pub units: Vec<CompilationUnit>,
+    /// All resolved functions (from all units)
     pub functions: Vec<Function>,
+    /// All resolved classes (from all units)
     pub classes: Vec<ClassDef>,
+    /// All resolved traits (from all units)
+    pub traits: Vec<TraitDef>,
+}
+
+impl Program {
+    /// Create a program from a single compilation unit (backwards compatibility)
+    #[must_use]
+    pub fn from_unit(unit: CompilationUnit) -> Self {
+        Self {
+            functions: unit.functions.clone(),
+            classes: unit.classes.clone(),
+            traits: unit.traits.clone(),
+            units: vec![unit],
+        }
+    }
+
+    /// Create an empty program
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            units: Vec::new(),
+            functions: Vec::new(),
+            classes: Vec::new(),
+            traits: Vec::new(),
+        }
+    }
 }
 
 /// Function definition

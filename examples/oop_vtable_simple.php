@@ -6,7 +6,7 @@ class Dog {
     }
 }
 
-fn main() {
+function main() {
     $dog: Dog = new Dog();
     echo $dog->speak();
 }

@@ -1,5 +1,5 @@
 <?php
 
-fn main() {
+function main() {
     echo "Hello, World!\n";
 }

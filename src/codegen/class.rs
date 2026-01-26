@@ -6,7 +6,7 @@ use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 
-use crate::ast::{ClassDef, Method, Type};
+use crate::ast::{ClassDef, Method, TraitDef, Type};
 use crate::errors::CompileError;
 use crate::types::ClassRegistry;
 use miette::Result;
@@ -34,15 +34,94 @@ impl ClassCodeGen {
     pub fn declare_methods(
         &mut self,
         classes: &[ClassDef],
+        traits: &[TraitDef],
         _registry: &ClassRegistry,
         module: &mut ObjectModule,
     ) -> Result<()> {
+        // Declare class's own methods
         for class in classes {
             for method in &class.methods {
                 self.declare_method(class, method, module)?;
             }
+
+            // Declare trait methods for this class
+            for trait_use in &class.trait_uses {
+                for trait_qn in &trait_use.traits {
+                    let trait_name = trait_qn.full_path();
+                    if let Some(trait_def) = traits.iter().find(|t| {
+                        t.qualified_name
+                            .as_ref()
+                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| qn.full_path() == trait_name)
+                    }) {
+                        for method in &trait_def.methods {
+                            // Only declare if class doesn't override
+                            if !class.methods.iter().any(|m| m.name == method.name) {
+                                self.declare_trait_method(class, method, module)?;
+                            }
+                        }
+                    }
+                }
+            }
         }
         Ok(())
+    }
+
+    /// Declare a trait method as belonging to a class
+    fn declare_trait_method(
+        &mut self,
+        class: &ClassDef,
+        method: &Method,
+        module: &mut ObjectModule,
+    ) -> Result<()> {
+        let class_key = Self::get_mangled_class_name(class);
+        let mangled_name = format!("{}_{}", class_key, method.name);
+
+        // Skip if already declared
+        if self.methods.contains_key(&mangled_name) {
+            return Ok(());
+        }
+
+        // Skip abstract methods (no body)
+        if method.is_abstract {
+            return Ok(());
+        }
+
+        let ptr_type = module.target_config().pointer_type();
+        let mut sig = module.make_signature();
+
+        // Non-static methods get $this as first parameter
+        if !method.is_static {
+            sig.params.push(AbiParam::new(ptr_type)); // $this
+        }
+
+        // Regular parameters
+        for param in &method.params {
+            let ty = Self::cranelift_type(&param.ty, ptr_type);
+            sig.params.push(AbiParam::new(ty));
+        }
+
+        // Return type
+        if method.return_type != Type::Void {
+            let ret_ty = Self::cranelift_type(&method.return_type, ptr_type);
+            sig.returns.push(AbiParam::new(ret_ty));
+        }
+
+        let func_id = module
+            .declare_function(&mangled_name, Linkage::Local, &sig)
+            .map_err(|e| CompileError::CodegenError {
+                message: format!("Failed to declare trait method {mangled_name}: {e}"),
+            })?;
+
+        self.methods.insert(mangled_name, func_id);
+        Ok(())
+    }
+
+    /// Get the mangled class name for codegen
+    fn get_mangled_class_name(class: &ClassDef) -> String {
+        class
+            .qualified_name
+            .as_ref()
+            .map_or_else(|| class.name.clone(), |qn| qn.mangle())
     }
 
     /// Declare a single method as a function
@@ -52,7 +131,8 @@ impl ClassCodeGen {
         method: &Method,
         module: &mut ObjectModule,
     ) -> Result<()> {
-        let mangled_name = format!("{}_{}", class.name, method.name);
+        let class_key = Self::get_mangled_class_name(class);
+        let mangled_name = format!("{}_{}", class_key, method.name);
 
         // Skip if already declared
         if self.methods.contains_key(&mangled_name) {
@@ -104,7 +184,12 @@ impl ClassCodeGen {
         let ptr_size = ptr_type.bytes() as usize;
 
         for class_info in registry.all_classes() {
-            let vtable_name = format!("vtable_{}", class_info.name);
+            // Use mangled qualified name for vtable
+            let class_key = class_info
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class_info.name.clone(), |qn| qn.mangle());
+            let vtable_name = format!("vtable_{}", class_key);
 
             // Vtable is an array of function pointers
             let vtable_size = class_info.vtable_layout.len() * ptr_size;
@@ -126,7 +211,10 @@ impl ClassCodeGen {
                     message: format!("Failed to define vtable {vtable_name}: {e}"),
                 })?;
 
-            self.vtables.insert(class_info.name.clone(), data_id);
+            // Store vtable by class key
+            self.vtables.insert(class_key, data_id);
+            // Also by simple name for backwards compatibility lookup
+            self.vtables.entry(class_info.name.clone()).or_insert(data_id);
         }
 
         Ok(())
@@ -143,7 +231,9 @@ impl ClassCodeGen {
         let mut current = class_name.to_string();
 
         loop {
-            let mangled = format!("{current}_{method_name}");
+            // Mangle the class name: App\Models\Entity -> App__Models__Entity
+            let mangled_class = current.replace('\\', "__");
+            let mangled = format!("{mangled_class}_{method_name}");
             if self.methods.contains_key(&mangled) {
                 return mangled;
             }
@@ -158,8 +248,9 @@ impl ClassCodeGen {
             break;
         }
 
-        // Default: use the class's own method name
-        format!("{class_name}_{method_name}")
+        // Default: use the class's own method name (mangled)
+        let mangled_class = class_name.replace('\\', "__");
+        format!("{mangled_class}_{method_name}")
     }
 
     /// Create static properties as global data
@@ -171,12 +262,14 @@ impl ClassCodeGen {
         let ptr_type = module.target_config().pointer_type();
 
         for class in classes {
+            let class_key = Self::get_mangled_class_name(class);
+
             for prop in &class.properties {
                 if !prop.is_static {
                     continue;
                 }
 
-                let data_name = format!("{}_{}", class.name, prop.name);
+                let data_name = format!("{}_{}", class_key, prop.name);
                 let size = Self::type_size(&prop.ty, ptr_type);
 
                 let data_id = module

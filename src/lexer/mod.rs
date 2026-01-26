@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn test_simple_tokenize() {
         let source = r#"<?php
-fn main() {
+function main() {
     echo "Hello";
 }
 "#;

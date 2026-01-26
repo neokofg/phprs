@@ -1,15 +1,19 @@
 mod expr;
+mod namespace;
 mod oop;
 mod stmt;
 mod types;
 
 pub use expr::{ArrayElement, BinaryOp, Expr, ExprKind, UnaryOp};
-pub use oop::{ClassDef, Method, Property, Visibility};
+pub use namespace::{
+    CompilationUnit, NamespaceDecl, QualifiedName, TraitUse, UseDecl, UseItem, UseKind,
+};
+pub use oop::{ClassDef, InterfaceDef, Method, Property, TraitDef, Visibility};
 pub use stmt::{Function, Param, Program, Stmt, StmtKind};
 pub use types::Type;
 
 /// Span information for error reporting
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

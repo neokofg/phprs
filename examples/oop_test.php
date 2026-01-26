@@ -4,21 +4,21 @@ class Point {
     public $x: int;
     public $y: int;
 
-    public fn __construct($x: int, $y: int) {
+    public function __construct($x: int, $y: int) {
         $this->x = $x;
         $this->y = $y;
     }
 
-    public fn getX(): int {
+    public function getX(): int {
         return $this->x;
     }
 
-    public fn getY(): int {
+    public function getY(): int {
         return $this->y;
     }
 }
 
-fn main() {
+function main() {
     $p: Point = new Point(10, 20);
     echo "Point created\n";
 }

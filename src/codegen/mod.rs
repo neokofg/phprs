@@ -84,9 +84,9 @@ impl CodeGen {
         self.declare_printf()?;
         self.declare_runtime_functions()?;
 
-        // Declare class methods
+        // Declare class methods (including trait methods)
         self.class_codegen
-            .declare_methods(&program.classes, &self.class_registry, &mut self.module)?;
+            .declare_methods(&program.classes, &program.traits, &self.class_registry, &mut self.module)?;
 
         // Create vtables for all classes (after methods are declared)
         self.class_codegen
@@ -113,6 +113,28 @@ impl CodeGen {
                     self.compile_method(class, method)?;
                 }
             }
+
+            // Compile trait methods for this class
+            for trait_use in &class.trait_uses {
+                for trait_qn in &trait_use.traits {
+                    let trait_name = trait_qn.full_path();
+                    if let Some(trait_def) = program.traits.iter().find(|t| {
+                        t.qualified_name
+                            .as_ref()
+                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| qn.full_path() == trait_name)
+                    }) {
+                        for method in &trait_def.methods {
+                            // Only compile if class doesn't override
+                            if !class.methods.iter().any(|m| m.name == method.name)
+                                && !method.is_abstract
+                                && method.body.is_some()
+                            {
+                                self.compile_trait_method(class, method)?;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Third pass: compile function bodies
@@ -128,7 +150,12 @@ impl CodeGen {
         class: &crate::ast::ClassDef,
         method: &crate::ast::Method,
     ) -> Result<()> {
-        let mangled_name = format!("{}_{}", class.name, method.name);
+        // Use qualified name for mangling if available
+        let class_key = class
+            .qualified_name
+            .as_ref()
+            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+        let mangled_name = format!("{}_{}", class_key, method.name);
         let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
             CompileError::CodegenError {
                 message: format!("Method {mangled_name} not found"),
@@ -158,8 +185,13 @@ impl CodeGen {
                 &mut self.data_id_counter,
             );
 
-            // Set class context
-            compiler.current_class = Some(class.name.clone());
+            // Set class context (use qualified name for proper parent resolution)
+            compiler.current_class = Some(
+                class
+                    .qualified_name
+                    .as_ref()
+                    .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+            );
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);
 
@@ -205,6 +237,104 @@ impl CodeGen {
             .define_function(func_id, &mut self.ctx)
             .map_err(|e| CompileError::CodegenError {
                 message: format!("Failed to define method {mangled_name}: {e}"),
+            })?;
+
+        self.module.clear_context(&mut self.ctx);
+        Ok(())
+    }
+
+    fn compile_trait_method(
+        &mut self,
+        class: &crate::ast::ClassDef,
+        method: &crate::ast::Method,
+    ) -> Result<()> {
+        // Use the class's qualified name for mangling
+        let class_key = class
+            .qualified_name
+            .as_ref()
+            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+        let mangled_name = format!("{}_{}", class_key, method.name);
+        let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
+            CompileError::CodegenError {
+                message: format!("Trait method {mangled_name} not found"),
+            }
+        })?;
+
+        self.ctx.func.signature = self
+            .module
+            .declarations()
+            .get_function_decl(func_id)
+            .signature
+            .clone();
+
+        let mut builder_ctx = FunctionBuilderContext::new();
+        {
+            let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut builder_ctx);
+
+            let entry_block = builder.create_block();
+            builder.append_block_params_for_function_params(entry_block);
+            builder.switch_to_block(entry_block);
+            builder.seal_block(entry_block);
+
+            let mut compiler = FunctionCompiler::new(
+                &mut builder,
+                &mut self.module,
+                &self.functions,
+                &mut self.data_id_counter,
+            );
+
+            // Set class context to the class using the trait
+            compiler.current_class = Some(
+                class
+                    .qualified_name
+                    .as_ref()
+                    .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+            );
+            compiler.class_registry = Some(&self.class_registry);
+            compiler.class_codegen = Some(&self.class_codegen);
+
+            let mut param_idx = 0;
+
+            // Add $this for non-static methods
+            if !method.is_static {
+                let this_val = compiler.builder.block_params(entry_block)[param_idx];
+                let this_var = compiler.declare_variable("this", &Type::Class(class.name.clone()));
+                compiler.builder.def_var(this_var, this_val);
+                param_idx += 1;
+            }
+
+            // Add parameters as variables
+            for param in &method.params {
+                let val = compiler.builder.block_params(entry_block)[param_idx];
+                let var = compiler.declare_variable(&param.name, &param.ty);
+                compiler.builder.def_var(var, val);
+                param_idx += 1;
+            }
+
+            // Compile body
+            if let Some(body) = &method.body {
+                for stmt in body {
+                    compiler.compile_stmt(stmt)?;
+                }
+            }
+
+            // Add implicit return if needed
+            if !compiler.terminated {
+                if method.return_type == Type::Void {
+                    compiler.builder.ins().return_(&[]);
+                } else {
+                    let default_val = compiler.default_value(&method.return_type);
+                    compiler.builder.ins().return_(&[default_val]);
+                }
+            }
+
+            builder.finalize();
+        }
+
+        self.module
+            .define_function(func_id, &mut self.ctx)
+            .map_err(|e| CompileError::CodegenError {
+                message: format!("Failed to define trait method {mangled_name}: {e}"),
             })?;
 
         self.module.clear_context(&mut self.ctx);

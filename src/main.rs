@@ -8,6 +8,7 @@ mod errors;
 mod lexer;
 mod ownership;
 mod parser;
+mod resolver;
 mod types;
 
 #[derive(Parser, Debug)]
@@ -77,22 +78,37 @@ fn compile_file(
         eprintln!("=== Tokens ===\n{tokens:?}");
     }
 
-    // 2. Parsing
-    let ast = parser::parse(tokens)?;
+    // 2. Parsing to compilation unit
+    let unit = parser::parse_unit(tokens)?;
+    if debug {
+        eprintln!("=== Compilation Unit ===\n{unit:#?}");
+    }
+
+    // 3. Module resolution (if there are imports)
+    let ast = if unit.uses.is_empty() && unit.namespace.is_none() {
+        // Simple case: no namespace, no imports - just convert to Program
+        ast::Program::from_unit(unit)
+    } else {
+        // Complex case: resolve imports
+        let input_dir = input.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let mut resolver = resolver::ModuleResolver::new(vec![input_dir]);
+        resolver.resolve(input.to_path_buf(), unit)?
+    };
+
     if debug {
         eprintln!("=== AST ===\n{ast:#?}");
     }
 
-    // 3. Type checking
+    // 4. Type checking
     let typed_ast = types::check(&ast)?;
     if debug {
         eprintln!("=== Typed AST ===\n{typed_ast:#?}");
     }
 
-    // 4. Ownership checking
+    // 5. Ownership checking
     ownership::check(&typed_ast)?;
 
-    // 5. Code generation
+    // 6. Code generation
     let output_path = output.map_or_else(
         || {
             let mut path = input.to_path_buf();

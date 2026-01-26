@@ -1,6 +1,6 @@
 <?php
 
-fn main() {
+function main() {
     // Copy types work as expected
     $x: int = 42;
     $y = $x;       // Copy - int is Copy type

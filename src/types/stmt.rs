@@ -82,16 +82,18 @@ impl TypeChecker {
         let init_type = init_typed.ty.clone().unwrap_or(Type::Unknown);
 
         let var_type = if let Some(declared_ty) = ty {
-            if !self.types_compatible(declared_ty, &init_type) {
+            // Resolve the declared type (e.g., SimpleUser -> App\Models\SimpleUser)
+            let resolved_ty = self.resolve_type(declared_ty);
+            if !self.types_compatible(&resolved_ty, &init_type) {
                 return Err(CompileError::TypeError {
                     message: format!(
-                        "Type mismatch: expected {declared_ty}, found {init_type}"
+                        "Type mismatch: expected {resolved_ty}, found {init_type}"
                     ),
                     span: stmt.span.into(),
                 }
                 .into());
             }
-            declared_ty.clone()
+            resolved_ty
         } else {
             init_type
         };

@@ -4,9 +4,10 @@
 
 mod class;
 mod expr;
+mod namespace;
 mod stmt;
 
-use crate::ast::{Function, Param, Program, Span, Type};
+use crate::ast::{CompilationUnit, Function, Param, Program, Span, Type};
 use crate::errors::CompileError;
 use crate::lexer::{SpannedToken, TokenKind};
 use miette::Result;
@@ -15,6 +16,12 @@ use miette::Result;
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program> {
     let mut parser = Parser::new(tokens);
     parser.parse_program()
+}
+
+/// Parse tokens into a compilation unit (single file).
+pub fn parse_unit(tokens: Vec<SpannedToken>) -> Result<CompilationUnit> {
+    let mut parser = Parser::new(tokens);
+    parser.parse_compilation_unit()
 }
 
 struct Parser {
@@ -82,9 +89,25 @@ impl Parser {
 
     // === Program parsing ===
 
-    fn parse_program(&mut self) -> Result<Program> {
+    /// Parse a compilation unit (single file with namespace and uses)
+    fn parse_compilation_unit(&mut self) -> Result<CompilationUnit> {
+        // 1. Parse optional namespace declaration (must be first after <?php)
+        let namespace = if self.check(TokenKind::Namespace) {
+            Some(self.parse_namespace()?)
+        } else {
+            None
+        };
+
+        // 2. Parse top-level use declarations
+        let mut uses = Vec::new();
+        while self.check(TokenKind::Use) {
+            uses.push(self.parse_use_declaration()?);
+        }
+
+        // 3. Parse functions, classes, and traits
         let mut functions = Vec::new();
         let mut classes = Vec::new();
+        let mut traits = Vec::new();
         let mut top_level_stmts = Vec::new();
 
         while !self.check(TokenKind::Eof) {
@@ -95,9 +118,26 @@ impl Parser {
                 TokenKind::Class | TokenKind::Abstract | TokenKind::Final => {
                     classes.push(self.parse_class()?);
                 }
+                TokenKind::Trait => {
+                    traits.push(self.parse_trait()?);
+                }
                 TokenKind::Interface => {
                     return Err(CompileError::ParserError {
                         message: "Interfaces are not yet fully supported".to_string(),
+                        span: self.current().span,
+                    }
+                    .into());
+                }
+                TokenKind::Namespace => {
+                    return Err(CompileError::ParserError {
+                        message: "Namespace declaration must be at the beginning of the file".to_string(),
+                        span: self.current().span,
+                    }
+                    .into());
+                }
+                TokenKind::Use => {
+                    return Err(CompileError::ParserError {
+                        message: "Use declarations must appear before any other code".to_string(),
                         span: self.current().span,
                     }
                     .into());
@@ -122,6 +162,7 @@ impl Parser {
             }
         }
 
+        // Wrap top-level statements in main function
         if !top_level_stmts.is_empty() {
             let has_main = functions.iter().any(|f| f.name == "main");
             if has_main {
@@ -142,7 +183,20 @@ impl Parser {
             functions.push(main_fn);
         }
 
-        Ok(Program { functions, classes })
+        Ok(CompilationUnit {
+            namespace,
+            uses,
+            functions,
+            classes,
+            traits,
+            file_path: None,
+        })
+    }
+
+    /// Parse a program (backwards compatible - wraps compilation unit)
+    fn parse_program(&mut self) -> Result<Program> {
+        let unit = self.parse_compilation_unit()?;
+        Ok(Program::from_unit(unit))
     }
 
     // === Function parsing ===
@@ -293,7 +347,7 @@ mod tests {
     #[test]
     fn test_parse_function() {
         let source = r#"<?php
-fn main() {
+function main() {
     echo "Hello";
 }
 "#;
@@ -305,7 +359,7 @@ fn main() {
 
     #[test]
     fn test_parse_binary_expr() {
-        let source = "<?php fn main() { $x: int = 1 + 2 * 3; }";
+        let source = "<?php function main() { $x: int = 1 + 2 * 3; }";
         let tokens = tokenize(source).unwrap();
         let program = parse(tokens).unwrap();
         assert_eq!(program.functions.len(), 1);

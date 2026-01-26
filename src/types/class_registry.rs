@@ -12,18 +12,46 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{ClassDef, Type, Visibility};
+use crate::ast::{ClassDef, QualifiedName, TraitDef, Type, Visibility};
 
 /// Registry of all classes in the program
 #[derive(Debug, Default)]
 pub struct ClassRegistry {
     classes: HashMap<String, ClassInfo>,
+    traits: HashMap<String, TraitInfo>,
+}
+
+/// Complete information about a trait
+#[derive(Debug, Clone)]
+pub struct TraitInfo {
+    /// Simple trait name
+    pub name: String,
+    /// Fully qualified name
+    pub qualified_name: Option<QualifiedName>,
+    /// Trait properties
+    pub properties: Vec<PropertyInfo>,
+    /// Trait methods
+    pub methods: Vec<TraitMethodInfo>,
+}
+
+/// Information about a trait method
+#[derive(Debug, Clone)]
+pub struct TraitMethodInfo {
+    pub name: String,
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+    pub visibility: Visibility,
+    pub is_static: bool,
+    pub is_abstract: bool,
 }
 
 /// Complete information about a class
 #[derive(Debug, Clone)]
 pub struct ClassInfo {
+    /// Simple class name
     pub name: String,
+    /// Fully qualified name
+    pub qualified_name: Option<QualifiedName>,
     pub parent: Option<String>,
     pub properties: Vec<PropertyInfo>,
     pub methods: Vec<MethodInfo>,
@@ -65,10 +93,59 @@ pub struct MethodInfo {
 }
 
 impl ClassRegistry {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             classes: HashMap::new(),
+            traits: HashMap::new(),
+        }
+    }
+
+    /// Register all traits from the program
+    pub fn register_traits(&mut self, traits: &[TraitDef]) {
+        for trait_def in traits {
+            let key = trait_def
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| trait_def.name.clone(), QualifiedName::full_path);
+
+            let properties: Vec<PropertyInfo> = trait_def
+                .properties
+                .iter()
+                .map(|prop| PropertyInfo {
+                    name: prop.name.clone(),
+                    ty: prop.ty.clone(),
+                    visibility: prop.visibility,
+                    is_static: prop.is_static,
+                    offset: 0, // Will be set when applied to class
+                })
+                .collect();
+
+            let methods: Vec<TraitMethodInfo> = trait_def
+                .methods
+                .iter()
+                .map(|method| TraitMethodInfo {
+                    name: method.name.clone(),
+                    params: method
+                        .params
+                        .iter()
+                        .map(|p| (p.name.clone(), p.ty.clone()))
+                        .collect(),
+                    return_type: method.return_type.clone(),
+                    visibility: method.visibility,
+                    is_static: method.is_static,
+                    is_abstract: method.is_abstract,
+                })
+                .collect();
+
+            let info = TraitInfo {
+                name: trait_def.name.clone(),
+                qualified_name: trait_def.qualified_name.clone(),
+                properties,
+                methods,
+            };
+
+            self.traits.insert(key, info);
         }
     }
 
@@ -76,8 +153,15 @@ impl ClassRegistry {
     pub fn register_classes(&mut self, classes: &[ClassDef]) {
         // First pass: register all class names
         for class in classes {
+            // Use qualified name as key if available
+            let key = class
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class.name.clone(), |qn| qn.full_path());
+
             let info = ClassInfo {
                 name: class.name.clone(),
+                qualified_name: class.qualified_name.clone(),
                 parent: class.parent.clone(),
                 properties: Vec::new(),
                 methods: Vec::new(),
@@ -86,17 +170,30 @@ impl ClassRegistry {
                 is_abstract: class.is_abstract,
                 is_final: class.is_final,
             };
-            self.classes.insert(class.name.clone(), info);
+            self.classes.insert(key, info);
         }
 
         // Second pass: build vtables and compute layouts
         // Process in order that respects inheritance
         let ordered = self.topological_sort(classes);
-        for class_name in ordered {
-            if let Some(class) = classes.iter().find(|c| c.name == class_name) {
+        for class_key in ordered {
+            // Find class by qualified name or simple name
+            if let Some(class) = classes.iter().find(|c| {
+                c.qualified_name
+                    .as_ref()
+                    .map_or(c.name == class_key, |qn| qn.full_path() == class_key)
+            }) {
                 self.build_class_info(class);
             }
         }
+    }
+
+    /// Get the registry key for a class
+    fn get_class_key(class: &ClassDef) -> String {
+        class
+            .qualified_name
+            .as_ref()
+            .map_or_else(|| class.name.clone(), |qn| qn.full_path())
     }
 
     /// Topological sort of classes by inheritance
@@ -105,26 +202,32 @@ impl ClassRegistry {
         let mut visited = std::collections::HashSet::new();
 
         fn visit(
-            name: &str,
+            key: &str,
             classes: &[ClassDef],
             visited: &mut std::collections::HashSet<String>,
             result: &mut Vec<String>,
         ) {
-            if visited.contains(name) {
+            if visited.contains(key) {
                 return;
             }
-            visited.insert(name.to_string());
+            visited.insert(key.to_string());
 
-            if let Some(class) = classes.iter().find(|c| c.name == name) {
+            // Find class by key (qualified name or simple name)
+            if let Some(class) = classes.iter().find(|c| {
+                c.qualified_name
+                    .as_ref()
+                    .map_or(c.name == key, |qn| qn.full_path() == key)
+            }) {
                 if let Some(parent) = &class.parent {
                     visit(parent, classes, visited, result);
                 }
             }
-            result.push(name.to_string());
+            result.push(key.to_string());
         }
 
         for class in classes {
-            visit(&class.name, classes, &mut visited, &mut result);
+            let key = Self::get_class_key(class);
+            visit(&key, classes, &mut visited, &mut result);
         }
 
         result
@@ -132,6 +235,12 @@ impl ClassRegistry {
 
     /// Build complete class info including inherited members
     fn build_class_info(&mut self, class: &ClassDef) {
+        let class_key = Self::get_class_key(class);
+        let mangled_class_name = class
+            .qualified_name
+            .as_ref()
+            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+
         let mut properties = Vec::new();
         let mut methods = Vec::new();
         let mut vtable_layout = Vec::new();
@@ -139,7 +248,9 @@ impl ClassRegistry {
 
         // Inherit from parent
         if let Some(parent_name) = &class.parent {
-            if let Some(parent_info) = self.classes.get(parent_name).cloned() {
+            // Try to find parent by qualified name first, then by simple name
+            let parent_info = self.classes.get(parent_name).cloned();
+            if let Some(parent_info) = parent_info {
                 // Inherit properties
                 for prop in &parent_info.properties {
                     if !prop.is_static {
@@ -154,6 +265,73 @@ impl ClassRegistry {
                 // Inherit methods (can be overridden)
                 for method in &parent_info.methods {
                     methods.push(method.clone());
+                }
+            }
+        }
+
+        // Apply traits
+        for trait_use in &class.trait_uses {
+            for trait_qn in &trait_use.traits {
+                let trait_key = trait_qn.full_path();
+                if let Some(trait_info) = self.traits.get(&trait_key).cloned() {
+                    // Add trait properties
+                    for trait_prop in &trait_info.properties {
+                        // Don't add if already exists (class can override)
+                        if !properties.iter().any(|p| p.name == trait_prop.name) {
+                            let size = self.type_size(&trait_prop.ty);
+                            let prop_info = PropertyInfo {
+                                name: trait_prop.name.clone(),
+                                ty: trait_prop.ty.clone(),
+                                visibility: trait_prop.visibility,
+                                is_static: trait_prop.is_static,
+                                offset: if trait_prop.is_static { 0 } else { offset },
+                            };
+                            if !trait_prop.is_static {
+                                offset += size;
+                            }
+                            properties.push(prop_info);
+                        }
+                    }
+
+                    // Add trait methods
+                    for trait_method in &trait_info.methods {
+                        // Don't add if already exists (class can override)
+                        if !methods.iter().any(|m| m.name == trait_method.name) {
+                            let mangled_name =
+                                format!("{}_{}", mangled_class_name, trait_method.name);
+
+                            if trait_method.is_static {
+                                let method_info = MethodInfo {
+                                    name: trait_method.name.clone(),
+                                    params: trait_method.params.clone(),
+                                    return_type: trait_method.return_type.clone(),
+                                    visibility: trait_method.visibility,
+                                    is_static: true,
+                                    is_abstract: trait_method.is_abstract,
+                                    is_final: false,
+                                    vtable_index: None,
+                                    mangled_name,
+                                };
+                                methods.push(method_info);
+                            } else {
+                                let vtable_idx = vtable_layout.len();
+                                vtable_layout.push(trait_method.name.clone());
+
+                                let method_info = MethodInfo {
+                                    name: trait_method.name.clone(),
+                                    params: trait_method.params.clone(),
+                                    return_type: trait_method.return_type.clone(),
+                                    visibility: trait_method.visibility,
+                                    is_static: false,
+                                    is_abstract: trait_method.is_abstract,
+                                    is_final: false,
+                                    vtable_index: Some(vtable_idx),
+                                    mangled_name,
+                                };
+                                methods.push(method_info);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -186,7 +364,7 @@ impl ClassRegistry {
 
         // Add own methods
         for method in &class.methods {
-            let mangled_name = format!("{}_{}", class.name, method.name);
+            let mangled_name = format!("{}_{}", mangled_class_name, method.name);
 
             if method.is_static {
                 // Static methods don't go in vtable
@@ -249,7 +427,7 @@ impl ClassRegistry {
         let object_size = (offset + 7) & !7;
 
         // Update class info
-        if let Some(info) = self.classes.get_mut(&class.name) {
+        if let Some(info) = self.classes.get_mut(&class_key) {
             info.properties = properties;
             info.methods = methods;
             info.vtable_layout = vtable_layout;
@@ -272,32 +450,35 @@ impl ClassRegistry {
         }
     }
 
-    /// Get class info by name
-    #[must_use] 
+    /// Get class info by name (tries qualified name first, then simple name)
+    #[must_use]
     pub fn get_class(&self, name: &str) -> Option<&ClassInfo> {
-        self.classes.get(name)
+        // First try exact match
+        if let Some(info) = self.classes.get(name) {
+            return Some(info);
+        }
+        // Then try to find by simple name
+        self.classes.values().find(|info| info.name == name)
     }
 
     /// Get property info from a class (including inherited)
-    #[must_use] 
+    #[must_use]
     pub fn get_property(&self, class_name: &str, prop_name: &str) -> Option<&PropertyInfo> {
-        self.classes
-            .get(class_name)
+        self.get_class(class_name)
             .and_then(|c| c.properties.iter().find(|p| p.name == prop_name))
     }
 
     /// Get method info from a class (including inherited)
-    #[must_use] 
+    #[must_use]
     pub fn get_method(&self, class_name: &str, method_name: &str) -> Option<&MethodInfo> {
-        self.classes
-            .get(class_name)
+        self.get_class(class_name)
             .and_then(|c| c.methods.iter().find(|m| m.name == method_name))
     }
 
     /// Check if a class exists
-    #[must_use] 
+    #[must_use]
     pub fn class_exists(&self, name: &str) -> bool {
-        self.classes.contains_key(name)
+        self.get_class(name).is_some()
     }
 
     /// Check if child class is a subtype of parent class
@@ -342,6 +523,23 @@ impl ClassRegistry {
         self.classes.values()
     }
 
+    /// Get trait info by name
+    #[must_use]
+    pub fn get_trait(&self, name: &str) -> Option<&TraitInfo> {
+        // First try exact match
+        if let Some(info) = self.traits.get(name) {
+            return Some(info);
+        }
+        // Then try to find by simple name
+        self.traits.values().find(|info| info.name == name)
+    }
+
+    /// Check if a trait exists
+    #[must_use]
+    pub fn trait_exists(&self, name: &str) -> bool {
+        self.get_trait(name).is_some()
+    }
+
     /// Get constructor info for a class
     #[must_use] 
     pub fn get_constructor(&self, class_name: &str) -> Option<&MethodInfo> {
@@ -352,15 +550,19 @@ impl ClassRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Param, Span};
+    use crate::ast::{Span};
 
     fn make_class(name: &str, parent: Option<&str>) -> ClassDef {
         ClassDef {
             name: name.to_string(),
+            qualified_name: None,
             parent: parent.map(|s| s.to_string()),
+            parent_qualified: None,
             interfaces: vec![],
+            interfaces_qualified: vec![],
             properties: vec![],
             methods: vec![],
+            trait_uses: vec![],
             is_abstract: false,
             is_final: false,
             span: Span::default(),

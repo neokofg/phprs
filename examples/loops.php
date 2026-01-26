@@ -1,6 +1,6 @@
 <?php
 
-fn main() {
+function main() {
     // While loop
     $i: int = 0;
     while ($i < 5) {

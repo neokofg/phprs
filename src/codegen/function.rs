@@ -144,7 +144,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             StmtKind::Echo(exprs) => {
                 for expr in exprs {
                     let val = self.compile_expr(expr)?;
-                    self.emit_print(val, expr.ty.as_ref().unwrap_or(&Type::Int))?;
+                    // Infer type from expression kind if not set
+                    let ty = expr.ty.as_ref().unwrap_or_else(|| self.infer_type(&expr.kind));
+                    self.emit_print(val, ty)?;
                 }
             }
 
@@ -510,7 +512,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
         // 2. Store vtable pointer at offset 0
         if let Some(class_codegen) = self.class_codegen {
-            if let Some(vtable_id) = class_codegen.get_vtable(class_name) {
+            // Mangle class name for vtable lookup: App\Models\User -> App__Models__User
+            let mangled_class = class_name.replace('\\', "__");
+            if let Some(vtable_id) = class_codegen.get_vtable(&mangled_class) {
                 let vtable_local = self.module.declare_data_in_func(vtable_id, self.builder.func);
                 let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_local);
                 self.builder
@@ -560,7 +564,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
         let mut current = class_name.to_string();
         loop {
-            let ctor_name = format!("{current}___construct");
+            // Mangle class name: App\Models\Entity -> App__Models__Entity
+            let mangled_class = current.replace('\\', "__");
+            let ctor_name = format!("{mangled_class}___construct");
             if self.functions.contains_key(&ctor_name) {
                 return Some(ctor_name);
             }
@@ -810,7 +816,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         method: &str,
         args: &[Expr],
     ) -> Result<Value> {
-        let mangled_name = format!("{class_name}_{method}");
+        // Mangle class name: App\Models\Entity -> App__Models__Entity
+        let mangled_class = class_name.replace('\\', "__");
+        let mangled_name = format!("{mangled_class}_{method}");
         let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
             CompileError::CodegenError {
                 message: format!("Static method {class_name}::{method} not found"),
@@ -1111,6 +1119,25 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
+    /// Infer the type of an expression from its kind (fallback when ty is None)
+    fn infer_type<'t>(&self, kind: &'t ExprKind) -> &'t Type {
+        // Use a static reference for inferred types
+        static INT_TYPE: Type = Type::Int;
+        static FLOAT_TYPE: Type = Type::Float;
+        static BOOL_TYPE: Type = Type::Bool;
+        static STRING_TYPE: Type = Type::String;
+        static UNKNOWN_TYPE: Type = Type::Unknown;
+
+        match kind {
+            ExprKind::IntLit(_) => &INT_TYPE,
+            ExprKind::FloatLit(_) => &FLOAT_TYPE,
+            ExprKind::BoolLit(_) => &BOOL_TYPE,
+            ExprKind::StringLit(_) => &STRING_TYPE,
+            ExprKind::Null => &UNKNOWN_TYPE,
+            _ => &INT_TYPE, // Default to int for other expressions
+        }
+    }
+
     /// Emit vtable initialization code at the start of `main()`
     pub fn emit_vtable_init(
         &mut self,
@@ -1134,8 +1161,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 continue;
             }
 
+            // Get mangled class name for vtable lookup
+            let mangled_class_key = class_info
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class_info.name.clone(), |qn| qn.mangle());
+
             // Get vtable data address
-            let vtable_id = match codegen.get_vtable(&class_info.name) {
+            let vtable_id = match codegen.get_vtable(&mangled_class_key) {
                 Some(id) => id,
                 None => continue,
             };
@@ -1145,11 +1178,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 .declare_data_in_func(vtable_id, self.builder.func);
             let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_ref);
 
+            // Get qualified class name for method lookup
+            let class_lookup_name = class_info
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class_info.name.clone(), |qn| qn.full_path());
+
             // Fill in each vtable slot with the function address
             for (idx, method_name) in class_info.vtable_layout.iter().enumerate() {
                 // Find the actual implementation
                 let mangled_name =
-                    codegen.find_method_impl(&class_info.name, method_name, registry);
+                    codegen.find_method_impl(&class_lookup_name, method_name, registry);
 
                 if let Some(&func_id) = all_functions.get(&mangled_name) {
                     let func_ref = self

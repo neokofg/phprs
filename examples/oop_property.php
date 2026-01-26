@@ -5,7 +5,7 @@ class Point {
     public $y: int;
 }
 
-fn main() {
+function main() {
     $p: Point = new Point();
     $p->x = 10;
     $p->y = 20;

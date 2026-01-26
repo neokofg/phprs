@@ -8,7 +8,6 @@ pub enum TokenKind {
     PhpOpen,
 
     // Keywords
-    #[token("fn")]
     #[token("function")]
     Fn,
 
@@ -90,6 +89,15 @@ pub enum TokenKind {
 
     #[token("use")]
     Use,
+
+    #[token("namespace")]
+    Namespace,
+
+    #[token("as")]
+    As,
+
+    #[token("\\")]
+    Backslash,
 
     // Types
     #[token("int")]

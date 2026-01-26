@@ -32,7 +32,7 @@ class Cat extends Animal {
     }
 }
 
-fn main() {
+function main() {
     $dog: Animal = new Dog("Rex");
     $cat: Animal = new Cat("Whiskers");
 

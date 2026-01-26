@@ -1,4 +1,4 @@
-use super::{Span, Stmt, Type};
+use super::{QualifiedName, Span, Stmt, TraitUse, Type};
 
 /// Visibility modifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,11 +59,24 @@ impl Method {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ClassDef {
+    /// Simple class name
     pub name: String,
+    /// Fully qualified name (with namespace)
+    pub qualified_name: Option<QualifiedName>,
+    /// Parent class (can be qualified)
     pub parent: Option<String>,
+    /// Parent class as qualified name (for resolution)
+    pub parent_qualified: Option<QualifiedName>,
+    /// Implemented interfaces
     pub interfaces: Vec<String>,
+    /// Interfaces as qualified names (for resolution)
+    pub interfaces_qualified: Vec<QualifiedName>,
+    /// Class properties
     pub properties: Vec<Property>,
+    /// Class methods
     pub methods: Vec<Method>,
+    /// Trait uses (class-level use statements)
+    pub trait_uses: Vec<TraitUse>,
     pub is_abstract: bool,
     pub is_final: bool,
     pub span: Span,
@@ -104,8 +117,13 @@ pub struct InterfaceDef {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct TraitDef {
+    /// Simple trait name
     pub name: String,
+    /// Fully qualified name (with namespace)
+    pub qualified_name: Option<QualifiedName>,
+    /// Trait properties
     pub properties: Vec<Property>,
+    /// Trait methods
     pub methods: Vec<Method>,
     pub span: Span,
 }

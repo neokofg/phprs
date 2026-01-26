@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn test_copy_type() {
         let source = r#"<?php
-fn main() {
+function main() {
     $x: int = 42;
     $y = $x;
     echo $x;  // OK - int is Copy
@@ -469,7 +469,7 @@ fn main() {
     #[test]
     fn test_move_string() {
         let source = r#"<?php
-fn main() {
+function main() {
     $s: string = "hello";
     $s2 = $s;
     echo $s;  // Error - string was moved

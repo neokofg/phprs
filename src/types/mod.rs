@@ -17,7 +17,7 @@ pub use class_registry::ClassRegistry;
 
 use std::collections::HashMap;
 
-use crate::ast::{Function, Program, Type, Visibility};
+use crate::ast::{Function, Program, QualifiedName, Span, Type, UseKind, Visibility};
 use crate::errors::CompileError;
 use miette::Result;
 
@@ -28,9 +28,11 @@ pub fn check(program: &Program) -> Result<Program> {
 }
 
 /// Get the class registry from a program (for codegen)
-#[must_use] 
+#[must_use]
 pub fn build_class_registry(program: &Program) -> ClassRegistry {
     let mut registry = ClassRegistry::new();
+    // Register traits first so classes can use them
+    registry.register_traits(&program.traits);
     registry.register_classes(&program.classes);
     registry
 }
@@ -44,6 +46,10 @@ pub(crate) struct TypeChecker {
     pub(crate) class_registry: ClassRegistry,
     /// Current class context (for $this, visibility checks)
     pub(crate) current_class: Option<String>,
+    /// Current namespace
+    current_namespace: Option<QualifiedName>,
+    /// Import aliases: simple name -> qualified name
+    import_aliases: HashMap<String, QualifiedName>,
 }
 
 impl TypeChecker {
@@ -53,6 +59,78 @@ impl TypeChecker {
             variables: vec![HashMap::new()],
             class_registry: ClassRegistry::new(),
             current_class: None,
+            current_namespace: None,
+            import_aliases: HashMap::new(),
+        }
+    }
+
+    /// Set up the type checker for a compilation unit
+    fn setup_for_unit(&mut self, unit: &crate::ast::CompilationUnit) {
+        // Set current namespace
+        self.current_namespace = unit.namespace.as_ref().map(|ns| ns.name.clone());
+
+        // Register imports
+        self.import_aliases.clear();
+        for use_decl in &unit.uses {
+            for item in &use_decl.items {
+                let alias = item.imported_name().to_string();
+                self.import_aliases.insert(alias, item.path.clone());
+            }
+        }
+    }
+
+    /// Resolve a type name to its qualified form
+    pub(crate) fn resolve_type_name(&self, name: &str) -> String {
+        // Check import aliases first
+        if let Some(qn) = self.import_aliases.get(name) {
+            return qn.full_path();
+        }
+
+        // If in a namespace, qualify the name
+        if let Some(ns) = &self.current_namespace {
+            let mut segments = ns.segments.clone();
+            segments.push(name.to_string());
+            return segments.join("\\");
+        }
+
+        // Return as-is (global namespace)
+        name.to_string()
+    }
+
+    /// Resolve a qualified name
+    pub(crate) fn resolve_qualified_name(&self, qn: &QualifiedName) -> String {
+        // If absolute or multi-segment, return as-is
+        if qn.is_absolute || qn.segments.len() > 1 {
+            return qn.full_path();
+        }
+
+        // Single segment - try to resolve
+        if let Some(name) = qn.segments.first() {
+            return self.resolve_type_name(name);
+        }
+
+        qn.full_path()
+    }
+
+    /// Resolve a Type, converting class names to fully qualified names
+    pub(crate) fn resolve_type(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Class(name) => {
+                let resolved = self.resolve_type_name(name);
+                // Only use resolved name if the class exists
+                if self.class_registry.class_exists(&resolved) {
+                    Type::Class(resolved)
+                } else if self.class_registry.class_exists(name) {
+                    ty.clone()
+                } else {
+                    Type::Class(resolved)
+                }
+            }
+            Type::Nullable(inner) => Type::Nullable(Box::new(self.resolve_type(inner))),
+            Type::Array(inner) => Type::Array(Box::new(self.resolve_type(inner))),
+            Type::Ref(inner) => Type::Ref(Box::new(self.resolve_type(inner))),
+            Type::RefMut(inner) => Type::RefMut(Box::new(self.resolve_type(inner))),
+            _ => ty.clone(),
         }
     }
 
@@ -140,7 +218,10 @@ impl TypeChecker {
     }
 
     fn check_program(&mut self, program: &Program) -> Result<Program> {
-        // First pass: register all classes
+        // First pass: register all traits (needed before classes that use them)
+        self.class_registry.register_traits(&program.traits);
+
+        // Second pass: register all classes (with qualified names if available)
         self.class_registry.register_classes(&program.classes);
 
         // Second pass: collect function signatures
@@ -152,8 +233,14 @@ impl TypeChecker {
 
         // Also register method signatures as functions (for calls)
         for class in &program.classes {
+            // Use qualified name for mangling if available
+            let class_key = class
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+
             for method in &class.methods {
-                let mangled_name = format!("{}_{}", class.name, method.name);
+                let mangled_name = format!("{}_{}", class_key, method.name);
                 let param_types: Vec<Type> = method.params.iter().map(|p| p.ty.clone()).collect();
                 self.functions
                     .insert(mangled_name, (param_types, method.return_type.clone()));
@@ -161,20 +248,35 @@ impl TypeChecker {
         }
 
         // Third pass: type check classes and update with typed expressions
+        // Set up context for each unit if we have units
         let mut typed_classes = Vec::new();
-        for class in &program.classes {
+        for (i, class) in program.classes.iter().enumerate() {
+            // Find which unit this class belongs to and set up context
+            if let Some(unit) = program.units.iter().find(|u| {
+                u.classes.iter().any(|c| c.name == class.name)
+            }) {
+                self.setup_for_unit(unit);
+            }
             typed_classes.push(self.check_class(class)?);
         }
 
         // Fourth pass: type check function bodies
         let mut typed_functions = Vec::new();
         for func in &program.functions {
+            // Find which unit this function belongs to and set up context
+            if let Some(unit) = program.units.iter().find(|u| {
+                u.functions.iter().any(|f| f.name == func.name)
+            }) {
+                self.setup_for_unit(unit);
+            }
             typed_functions.push(self.check_function(func)?);
         }
 
         Ok(Program {
+            units: program.units.clone(),
             functions: typed_functions,
             classes: typed_classes,
+            traits: program.traits.clone(),
         })
     }
 
@@ -201,8 +303,13 @@ impl TypeChecker {
             }
         }
 
-        // Set current class context
-        self.current_class = Some(class.name.clone());
+        // Set current class context (use qualified name if available)
+        self.current_class = Some(
+            class
+                .qualified_name
+                .as_ref()
+                .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+        );
 
         // Type check methods
         let mut typed_methods = Vec::new();
@@ -214,10 +321,14 @@ impl TypeChecker {
 
         Ok(crate::ast::ClassDef {
             name: class.name.clone(),
+            qualified_name: class.qualified_name.clone(),
             parent: class.parent.clone(),
+            parent_qualified: class.parent_qualified.clone(),
             interfaces: class.interfaces.clone(),
+            interfaces_qualified: class.interfaces_qualified.clone(),
             properties: class.properties.clone(),
             methods: typed_methods,
+            trait_uses: class.trait_uses.clone(),
             is_abstract: class.is_abstract,
             is_final: class.is_final,
             span: class.span,
@@ -258,6 +369,19 @@ impl TypeChecker {
             }
         }
 
+        // Resolve return type and parameter types
+        let resolved_return_type = self.resolve_type(&method.return_type);
+        let resolved_params: Vec<crate::ast::Param> = method
+            .params
+            .iter()
+            .map(|p| crate::ast::Param {
+                name: p.name.clone(),
+                ty: self.resolve_type(&p.ty),
+                is_ref: p.is_ref,
+                span: p.span,
+            })
+            .collect();
+
         // Abstract methods have no body to check
         if method.is_abstract {
             if method.body.is_some() {
@@ -267,7 +391,17 @@ impl TypeChecker {
                 }
                 .into());
             }
-            return Ok(method.clone());
+            return Ok(crate::ast::Method {
+                name: method.name.clone(),
+                params: resolved_params,
+                return_type: resolved_return_type,
+                visibility: method.visibility,
+                is_static: method.is_static,
+                is_abstract: method.is_abstract,
+                is_final: method.is_final,
+                body: None,
+                span: method.span,
+            });
         }
 
         // Check method body
@@ -276,18 +410,22 @@ impl TypeChecker {
 
             // Add $this to scope (not for static methods)
             if !method.is_static {
-                self.define_var("this", Type::Class(class.name.clone()));
+                let class_type_name = class
+                    .qualified_name
+                    .as_ref()
+                    .map_or_else(|| class.name.clone(), |qn| qn.full_path());
+                self.define_var("this", Type::Class(class_type_name));
             }
 
-            // Add parameters to scope
-            for param in &method.params {
+            // Add parameters to scope with resolved types
+            for param in &resolved_params {
                 self.define_var(&param.name, param.ty.clone());
             }
 
-            // Type check body
+            // Type check body with resolved return type
             let mut typed_stmts = Vec::new();
             for stmt in body {
-                typed_stmts.push(self.check_stmt(stmt, &method.return_type)?);
+                typed_stmts.push(self.check_stmt(stmt, &resolved_return_type)?);
             }
 
             self.pop_scope();
@@ -298,8 +436,8 @@ impl TypeChecker {
 
         Ok(crate::ast::Method {
             name: method.name.clone(),
-            params: method.params.clone(),
-            return_type: method.return_type.clone(),
+            params: resolved_params,
+            return_type: resolved_return_type,
             visibility: method.visibility,
             is_static: method.is_static,
             is_abstract: method.is_abstract,

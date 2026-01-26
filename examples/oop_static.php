@@ -12,7 +12,7 @@ class Counter {
     }
 }
 
-fn main() {
+function main() {
     echo Counter::getCount();
     echo "\n";
     Counter::increment();

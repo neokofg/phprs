@@ -43,6 +43,10 @@ pub enum CompileError {
     #[error("Codegen error: {message}")]
     #[diagnostic(code(phprs::codegen))]
     CodegenError { message: String },
+
+    #[error("Resolver error: {message}")]
+    #[diagnostic(code(phprs::resolver))]
+    ResolverError { message: String },
 }
 
 #[allow(dead_code)]

@@ -22,7 +22,7 @@ class Dog extends Animal {
     }
 }
 
-fn main() {
+function main() {
     $dog: Dog = new Dog("Rex");
     echo $dog->getName();
     echo "\n";

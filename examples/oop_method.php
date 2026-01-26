@@ -14,7 +14,7 @@ class Point {
     }
 }
 
-fn main() {
+function main() {
     $p: Point = new Point(42, 20);
     echo $p->getX();
 }

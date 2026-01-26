@@ -1,6 +1,6 @@
-//! Class parsing
+//! Class and trait parsing
 
-use crate::ast::{ClassDef, Method, Property, Type, Visibility};
+use crate::ast::{ClassDef, Method, Property, QualifiedName, TraitDef, TraitUse, Type, Visibility};
 use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;
@@ -23,23 +23,79 @@ impl Parser {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = name_token.text.clone();
 
-        let parent = if self.match_token(TokenKind::Extends) {
-            let parent_token = self.expect(TokenKind::Identifier)?;
-            Some(parent_token.text.clone())
+        // Parse parent class (can be qualified name)
+        let (parent, parent_qualified) = if self.match_token(TokenKind::Extends) {
+            let qn = self.parse_qualified_name()?;
+            let simple_name = qn.last().unwrap_or("").to_string();
+            (Some(simple_name), Some(qn))
         } else {
-            None
+            (None, None)
         };
 
+        // Parse interfaces (can be qualified names)
         let mut interfaces = Vec::new();
+        let mut interfaces_qualified = Vec::new();
         if self.match_token(TokenKind::Implements) {
             loop {
-                let iface_token = self.expect(TokenKind::Identifier)?;
-                interfaces.push(iface_token.text.clone());
+                let qn = self.parse_qualified_name()?;
+                let simple_name = qn.last().unwrap_or("").to_string();
+                interfaces.push(simple_name);
+                interfaces_qualified.push(qn);
                 if !self.match_token(TokenKind::Comma) {
                     break;
                 }
             }
         }
+
+        self.expect(TokenKind::LBrace)?;
+
+        let mut properties = Vec::new();
+        let mut methods = Vec::new();
+        let mut trait_uses = Vec::new();
+
+        while !self.check(TokenKind::RBrace) && !self.check(TokenKind::Eof) {
+            // Check for trait use: use SomeTrait;
+            if self.check(TokenKind::Use) {
+                trait_uses.push(self.parse_trait_use()?);
+                continue;
+            }
+
+            let (prop, meth) = self.parse_class_member()?;
+            if let Some(p) = prop {
+                properties.push(p);
+            }
+            if let Some(m) = meth {
+                methods.push(m);
+            }
+        }
+
+        let end = self.span();
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(ClassDef {
+            name,
+            qualified_name: None, // Will be set by resolver
+            parent,
+            parent_qualified,
+            interfaces,
+            interfaces_qualified,
+            properties,
+            methods,
+            trait_uses,
+            is_abstract,
+            is_final,
+            span: start.merge(end),
+        })
+    }
+
+    /// Parse a trait definition
+    pub(super) fn parse_trait(&mut self) -> Result<TraitDef> {
+        let start = self.span();
+
+        self.expect(TokenKind::Trait)?;
+
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = name_token.text.clone();
 
         self.expect(TokenKind::LBrace)?;
 
@@ -59,14 +115,11 @@ impl Parser {
         let end = self.span();
         self.expect(TokenKind::RBrace)?;
 
-        Ok(ClassDef {
+        Ok(TraitDef {
             name,
-            parent,
-            interfaces,
+            qualified_name: None, // Will be set by resolver
             properties,
             methods,
-            is_abstract,
-            is_final,
             span: start.merge(end),
         })
     }
@@ -74,29 +127,50 @@ impl Parser {
     fn parse_class_member(&mut self) -> Result<(Option<Property>, Option<Method>)> {
         let start = self.span();
 
-        let visibility = match self.peek() {
-            TokenKind::Public => {
-                self.advance();
-                Visibility::Public
-            }
-            TokenKind::Private => {
-                self.advance();
-                Visibility::Private
-            }
-            TokenKind::Protected => {
-                self.advance();
-                Visibility::Protected
-            }
-            _ => Visibility::Public,
-        };
+        // Parse modifiers in any order: abstract, final, static, visibility
+        let mut visibility = Visibility::Public;
+        let mut is_static = false;
+        let mut is_abstract = false;
+        let mut is_final = false;
 
-        let is_static = self.match_token(TokenKind::Static);
-        let is_abstract = self.match_token(TokenKind::Abstract);
-        let is_final = if is_abstract {
-            false
-        } else {
-            self.match_token(TokenKind::Final)
-        };
+        loop {
+            match self.peek() {
+                TokenKind::Public => {
+                    self.advance();
+                    visibility = Visibility::Public;
+                }
+                TokenKind::Private => {
+                    self.advance();
+                    visibility = Visibility::Private;
+                }
+                TokenKind::Protected => {
+                    self.advance();
+                    visibility = Visibility::Protected;
+                }
+                TokenKind::Static => {
+                    self.advance();
+                    is_static = true;
+                }
+                TokenKind::Abstract => {
+                    self.advance();
+                    is_abstract = true;
+                }
+                TokenKind::Final => {
+                    self.advance();
+                    is_final = true;
+                }
+                _ => break,
+            }
+        }
+
+        // abstract and final are mutually exclusive
+        if is_abstract && is_final {
+            return Err(CompileError::ParserError {
+                message: "Cannot use abstract and final together".to_string(),
+                span: self.current().span,
+            }
+            .into());
+        }
 
         if self.check(TokenKind::Fn) {
             self.parse_method(start, visibility, is_static, is_abstract, is_final)
