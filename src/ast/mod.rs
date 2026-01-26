@@ -1,8 +1,10 @@
 mod expr;
+mod oop;
 mod stmt;
 mod types;
 
-pub use expr::{BinaryOp, Expr, ExprKind, UnaryOp};
+pub use expr::{ArrayElement, BinaryOp, Expr, ExprKind, UnaryOp};
+pub use oop::{ClassDef, Method, Property, Visibility};
 pub use stmt::{Function, Param, Program, Stmt, StmtKind};
 pub use types::Type;
 

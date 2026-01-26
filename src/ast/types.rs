@@ -1,5 +1,6 @@
 /// Type representation in the AST
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code, clippy::enum_variant_names)]
 pub enum Type {
     /// 64-bit signed integer
     Int,
@@ -12,18 +13,32 @@ pub enum Type {
     /// No return value
     Void,
     /// Reference type (borrow)
-    Ref(Box<Type>),
+    Ref(Box<Self>),
     /// Mutable reference type
-    RefMut(Box<Type>),
+    RefMut(Box<Self>),
+    /// Class/object type
+    Class(String),
+    /// Interface type
+    Interface(String),
+    /// Nullable type (T or null)
+    Nullable(Box<Self>),
+    /// Array type
+    Array(Box<Self>),
+    /// Self type (inside class)
+    SelfType,
+    /// Static type (late static binding)
+    StaticType,
     /// Unknown type (to be inferred)
     Unknown,
 }
 
+#[allow(dead_code)]
 impl Type {
     /// Returns true if this type implements Copy semantics
     #[must_use]
     pub const fn is_copy(&self) -> bool {
-        matches!(self, Self::Int | Self::Float | Self::Bool)
+        // Unknown is treated as Copy to allow untyped parameters
+        matches!(self, Self::Int | Self::Float | Self::Bool | Self::Unknown)
     }
 
     /// Returns true if this type is a reference
@@ -34,9 +49,24 @@ impl Type {
 
     /// Returns the inner type if this is a reference
     #[must_use]
-    pub fn inner_type(&self) -> Option<&Type> {
+    pub fn inner_type(&self) -> Option<&Self> {
         match self {
             Self::Ref(inner) | Self::RefMut(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this is an object type
+    #[must_use]
+    pub const fn is_object(&self) -> bool {
+        matches!(self, Self::Class(_) | Self::Interface(_))
+    }
+
+    /// Get class name if this is a class type
+    #[must_use]
+    pub fn class_name(&self) -> Option<&str> {
+        match self {
+            Self::Class(name) | Self::Interface(name) => Some(name),
             _ => None,
         }
     }
@@ -52,6 +82,11 @@ impl std::fmt::Display for Type {
             Self::Void => write!(f, "void"),
             Self::Ref(inner) => write!(f, "&{inner}"),
             Self::RefMut(inner) => write!(f, "&mut {inner}"),
+            Self::Class(name) | Self::Interface(name) => write!(f, "{name}"),
+            Self::Nullable(inner) => write!(f, "?{inner}"),
+            Self::Array(inner) => write!(f, "array<{inner}>"),
+            Self::SelfType => write!(f, "self"),
+            Self::StaticType => write!(f, "static"),
             Self::Unknown => write!(f, "unknown"),
         }
     }

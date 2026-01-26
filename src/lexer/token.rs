@@ -9,6 +9,7 @@ pub enum TokenKind {
 
     // Keywords
     #[token("fn")]
+    #[token("function")]
     Fn,
 
     #[token("return")]
@@ -37,6 +38,58 @@ pub enum TokenKind {
 
     #[token("null")]
     Null,
+
+    // OOP Keywords
+    #[token("class")]
+    Class,
+
+    #[token("new")]
+    New,
+
+    #[token("public")]
+    Public,
+
+    #[token("private")]
+    Private,
+
+    #[token("protected")]
+    Protected,
+
+    #[token("extends")]
+    Extends,
+
+    #[token("implements")]
+    Implements,
+
+    #[token("interface")]
+    Interface,
+
+    #[token("abstract")]
+    Abstract,
+
+    #[token("static")]
+    Static,
+
+    #[token("final")]
+    Final,
+
+    #[token("const")]
+    Const,
+
+    #[token("$this")]
+    This,
+
+    #[token("self")]
+    SelfKw,
+
+    #[token("parent")]
+    Parent,
+
+    #[token("trait")]
+    Trait,
+
+    #[token("use")]
+    Use,
 
     // Types
     #[token("int")]
@@ -150,6 +203,12 @@ pub enum TokenKind {
     #[token("&")]
     Ampersand,
 
+    #[token("::")]
+    DoubleColon,
+
+    #[token("=>")]
+    FatArrow,
+
     // Delimiters
     #[token("(")]
     LParen,
@@ -188,40 +247,40 @@ pub enum TokenKind {
     Eof,
 }
 
+#[allow(dead_code)]
 impl TokenKind {
-    pub fn is_type_keyword(&self) -> bool {
+    #[must_use]
+    pub const fn is_type_keyword(self) -> bool {
         matches!(
             self,
-            TokenKind::TypeInt
-                | TokenKind::TypeFloat
-                | TokenKind::TypeString
-                | TokenKind::TypeBool
-                | TokenKind::TypeVoid
+            Self::TypeInt | Self::TypeFloat | Self::TypeString | Self::TypeBool | Self::TypeVoid
         )
     }
 
-    pub fn is_binary_operator(&self) -> bool {
+    #[must_use]
+    pub const fn is_binary_operator(self) -> bool {
         matches!(
             self,
-            TokenKind::Plus
-                | TokenKind::Minus
-                | TokenKind::Star
-                | TokenKind::Slash
-                | TokenKind::Percent
-                | TokenKind::Eq
-                | TokenKind::Ne
-                | TokenKind::Lt
-                | TokenKind::Le
-                | TokenKind::Gt
-                | TokenKind::Ge
-                | TokenKind::And
-                | TokenKind::Or
-                | TokenKind::Dot
+            Self::Plus
+                | Self::Minus
+                | Self::Star
+                | Self::Slash
+                | Self::Percent
+                | Self::Eq
+                | Self::Ne
+                | Self::Lt
+                | Self::Le
+                | Self::Gt
+                | Self::Ge
+                | Self::And
+                | Self::Or
+                | Self::Dot
         )
     }
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: (usize, usize),

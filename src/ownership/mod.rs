@@ -1,9 +1,16 @@
+#![allow(
+    clippy::too_many_lines,
+    clippy::match_same_arms,
+    clippy::missing_errors_doc
+)]
+
 use std::collections::HashMap;
 
 use crate::ast::{Expr, ExprKind, Function, Program, Span, Stmt, StmtKind, Type};
 use crate::errors::CompileError;
 use miette::Result;
 
+/// Check ownership rules for a program.
 pub fn check(program: &Program) -> Result<()> {
     let mut checker = OwnershipChecker::new();
     checker.check_program(program)
@@ -142,8 +149,7 @@ impl OwnershipChecker {
                     if info.state == VarState::BorrowedMut {
                         return Err(CompileError::OwnershipError {
                             message: format!(
-                                "Cannot assign to '{}' while it is mutably borrowed",
-                                target
+                                "Cannot assign to '{target}' while it is mutably borrowed"
                             ),
                             move_span: info.def_span.into(),
                             use_span: Some(stmt.span.into()),
@@ -270,7 +276,7 @@ impl OwnershipChecker {
                     // Check if moved
                     if info.state == VarState::Moved {
                         return Err(CompileError::OwnershipError {
-                            message: format!("Use of moved value: ${}", name),
+                            message: format!("Use of moved value: ${name}"),
                             move_span: info.move_span.unwrap_or(info.def_span).into(),
                             use_span: Some(expr.span.into()),
                         }
@@ -310,7 +316,7 @@ impl OwnershipChecker {
                     if let Some(info) = self.lookup_var(name) {
                         if info.state == VarState::Moved {
                             return Err(CompileError::OwnershipError {
-                                message: format!("Cannot borrow moved value: ${}", name),
+                                message: format!("Cannot borrow moved value: ${name}"),
                                 move_span: info.move_span.unwrap_or(info.def_span).into(),
                                 use_span: Some(expr.span.into()),
                             }
@@ -327,7 +333,7 @@ impl OwnershipChecker {
                     if let Some(info) = self.lookup_var(name) {
                         if info.state == VarState::Moved {
                             return Err(CompileError::OwnershipError {
-                                message: format!("Cannot mutably borrow moved value: ${}", name),
+                                message: format!("Cannot mutably borrow moved value: ${name}"),
                                 move_span: info.move_span.unwrap_or(info.def_span).into(),
                                 use_span: Some(expr.span.into()),
                             }
@@ -336,8 +342,7 @@ impl OwnershipChecker {
                         if info.state == VarState::Borrowed || info.state == VarState::BorrowedMut {
                             return Err(CompileError::OwnershipError {
                                 message: format!(
-                                    "Cannot mutably borrow '{}' while it is already borrowed",
-                                    name
+                                    "Cannot mutably borrow '{name}' while it is already borrowed"
                                 ),
                                 move_span: info.def_span.into(),
                                 use_span: Some(expr.span.into()),
@@ -360,6 +365,57 @@ impl OwnershipChecker {
             ExprKind::PrefixOp { target, .. } | ExprKind::PostfixOp { target, .. } => {
                 self.check_var_use(target, expr.span)?;
             }
+
+            // === OOP Expressions ===
+            ExprKind::New { args, .. } => {
+                for arg in args {
+                    self.check_expr(arg, true)?;
+                }
+            }
+
+            ExprKind::This => {
+                // $this is always valid within a class context
+            }
+
+            ExprKind::PropertyAccess { object, .. } => {
+                self.check_expr(object, false)?;
+            }
+
+            ExprKind::MethodCall { object, args, .. } => {
+                self.check_expr(object, false)?;
+                for arg in args {
+                    self.check_expr(arg, true)?;
+                }
+            }
+
+            ExprKind::StaticPropertyAccess { .. } => {
+                // Static access doesn't involve ownership
+            }
+
+            ExprKind::StaticMethodCall { args, .. } => {
+                for arg in args {
+                    self.check_expr(arg, true)?;
+                }
+            }
+
+            ExprKind::PropertyAssign { object, value, .. } => {
+                self.check_expr(object, false)?;
+                self.check_expr(value, true)?;
+            }
+
+            ExprKind::ArrayLit(elements) => {
+                for elem in elements {
+                    if let Some(key) = &elem.key {
+                        self.check_expr(key, false)?;
+                    }
+                    self.check_expr(&elem.value, true)?;
+                }
+            }
+
+            ExprKind::ArrayAccess { array, index } => {
+                self.check_expr(array, false)?;
+                self.check_expr(index, false)?;
+            }
         }
 
         Ok(())
@@ -369,7 +425,7 @@ impl OwnershipChecker {
         if let Some(info) = self.lookup_var(name) {
             if info.state == VarState::Moved {
                 return Err(CompileError::OwnershipError {
-                    message: format!("Use of moved value: ${}", name),
+                    message: format!("Use of moved value: ${name}"),
                     move_span: info.move_span.unwrap_or(info.def_span).into(),
                     use_span: Some(span.into()),
                 }

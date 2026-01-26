@@ -1,6 +1,8 @@
+#![allow(clippy::missing_errors_doc)]
+
 mod token;
 
-pub use token::{Token, TokenKind};
+pub use token::TokenKind;
 
 use crate::errors::CompileError;
 use logos::Logos;
@@ -43,7 +45,7 @@ pub fn tokenize(source: &str) -> Result<Vec<SpannedToken>> {
                     });
                 }
             }
-            Err(_) => {
+            Err(()) => {
                 if php_mode {
                     return Err(CompileError::LexerError {
                         message: format!("Unexpected character: {}", lexer.slice()),

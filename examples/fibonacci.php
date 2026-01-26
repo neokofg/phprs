@@ -1,6 +1,6 @@
 <?php
 
-fn fibonacci($n: int) -> int {
+fn fibonacci($n: int): int {
     if ($n <= 1) {
         return $n;
     }

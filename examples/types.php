@@ -1,14 +1,14 @@
 <?php
 
-fn add($a: int, $b: int) -> int {
+fn add($a: int, $b: int): int {
     return $a + $b;
 }
 
-fn multiply($a: float, $b: float) -> float {
+fn multiply($a: float, $b: float): float {
     return $a * $b;
 }
 
-fn is_positive($n: int) -> bool {
+fn is_positive($n: int): bool {
     return $n > 0;
 }
 

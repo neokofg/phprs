@@ -1,7 +1,10 @@
+#![allow(unused_assignments)] // False positive: thiserror uses message fields internally
+
 use miette::Diagnostic;
 use thiserror::Error;
 
 #[derive(Error, Diagnostic, Debug)]
+#[allow(clippy::enum_variant_names)] // All variants intentionally end with Error
 pub enum CompileError {
     #[error("Lexer error: {message}")]
     #[diagnostic(code(phprs::lexer))]
@@ -42,4 +45,5 @@ pub enum CompileError {
     CodegenError { message: String },
 }
 
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, CompileError>;

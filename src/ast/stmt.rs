@@ -1,9 +1,10 @@
-use super::{Expr, Span, Type};
+use super::{ClassDef, Expr, Span, Type};
 
 /// A complete program
 #[derive(Debug, Clone)]
 pub struct Program {
     pub functions: Vec<Function>,
+    pub classes: Vec<ClassDef>,
 }
 
 /// Function definition
@@ -59,7 +60,7 @@ pub enum StmtKind {
         value: Expr,
     },
 
-    /// Expression statement: foo();
+    /// Expression statement: `foo()`;
     Expr(Expr),
 
     /// Return statement: return expr;

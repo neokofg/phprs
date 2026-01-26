@@ -68,36 +68,39 @@ fn compile_file(
         fs::read_to_string(input).map_err(|e| miette::miette!("Failed to read file: {}", e))?;
 
     if debug {
-        eprintln!("=== Source ===\n{}", source);
+        eprintln!("=== Source ===\n{source}");
     }
 
     // 1. Lexing
     let tokens = lexer::tokenize(&source)?;
     if debug {
-        eprintln!("=== Tokens ===\n{:?}", tokens);
+        eprintln!("=== Tokens ===\n{tokens:?}");
     }
 
     // 2. Parsing
     let ast = parser::parse(tokens)?;
     if debug {
-        eprintln!("=== AST ===\n{:#?}", ast);
+        eprintln!("=== AST ===\n{ast:#?}");
     }
 
     // 3. Type checking
     let typed_ast = types::check(&ast)?;
     if debug {
-        eprintln!("=== Typed AST ===\n{:#?}", typed_ast);
+        eprintln!("=== Typed AST ===\n{typed_ast:#?}");
     }
 
     // 4. Ownership checking
     ownership::check(&typed_ast)?;
 
     // 5. Code generation
-    let output_path = output.map(|p| p.to_path_buf()).unwrap_or_else(|| {
-        let mut path = input.to_path_buf();
-        path.set_extension(if cfg!(windows) { "exe" } else { "" });
-        path
-    });
+    let output_path = output.map_or_else(
+        || {
+            let mut path = input.to_path_buf();
+            path.set_extension(if cfg!(windows) { "exe" } else { "" });
+            path
+        },
+        std::path::Path::to_path_buf,
+    );
 
     codegen::compile(&typed_ast, &output_path, emit_llvm)?;
 

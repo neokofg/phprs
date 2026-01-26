@@ -20,6 +20,7 @@ impl Expr {
     }
 
     #[must_use]
+    #[allow(dead_code)]
     pub fn with_type(mut self, ty: Type) -> Self {
         self.ty = Some(ty);
         self
@@ -28,6 +29,7 @@ impl Expr {
 
 /// Expression kinds
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ExprKind {
     /// Integer literal: 42
     IntLit(i64),
@@ -74,6 +76,56 @@ pub enum ExprKind {
 
     /// Postfix increment/decrement: $x++, $x--
     PostfixOp { op: UnaryOp, target: String },
+
+    // === OOP Expressions ===
+    /// Object instantiation: new ClassName($args)
+    New { class_name: String, args: Vec<Expr> },
+
+    /// $this reference
+    This,
+
+    /// Property access: $obj->property
+    PropertyAccess { object: Box<Expr>, property: String },
+
+    /// Method call: $obj->method($args)
+    MethodCall {
+        object: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
+
+    /// Static property access: `ClassName::$property`
+    StaticPropertyAccess {
+        class_name: String,
+        property: String,
+    },
+
+    /// Static method call: `ClassName::method($args)`
+    StaticMethodCall {
+        class_name: String,
+        method: String,
+        args: Vec<Expr>,
+    },
+
+    /// Property assignment: $obj->property = expr
+    PropertyAssign {
+        object: Box<Expr>,
+        property: String,
+        value: Box<Expr>,
+    },
+
+    /// Array literal: [1, 2, 3] or ["a" => 1, "b" => 2]
+    ArrayLit(Vec<ArrayElement>),
+
+    /// Array access: `$arr[0]` or `$arr["key"]`
+    ArrayAccess { array: Box<Expr>, index: Box<Expr> },
+}
+
+/// Array element (for array literals)
+#[derive(Debug, Clone)]
+pub struct ArrayElement {
+    pub key: Option<Expr>,
+    pub value: Expr,
 }
 
 /// Binary operators
@@ -119,6 +171,7 @@ impl BinaryOp {
 
     /// Returns true if this operator is left-associative
     #[must_use]
+    #[allow(dead_code, clippy::unused_self)]
     pub const fn is_left_assoc(self) -> bool {
         true
     }
