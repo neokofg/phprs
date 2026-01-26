@@ -1,6 +1,6 @@
 //! Class and trait parsing
 
-use crate::ast::{ClassDef, Method, Property, QualifiedName, TraitDef, TraitUse, Type, Visibility};
+use crate::ast::{ClassDef, Method, Property, TraitDef, Type, Visibility};
 use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::ast::QualifiedName;
 
 /// Resolves namespace paths to file paths (PSR-4 style)
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FileResolver {
     /// Root directories to search for files
     roots: Vec<PathBuf>,
@@ -14,11 +14,13 @@ pub struct FileResolver {
 impl FileResolver {
     /// Create a new file resolver with given root directories
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(roots: Vec<PathBuf>) -> Self {
         Self { roots }
     }
 
     /// Add a root directory
+    #[allow(dead_code)]
     pub fn add_root(&mut self, root: PathBuf) {
         if !self.roots.contains(&root) {
             self.roots.push(root);
@@ -30,7 +32,7 @@ impl FileResolver {
     #[must_use]
     pub fn resolve(&self, name: &QualifiedName) -> Option<PathBuf> {
         for root in &self.roots {
-            if let Some(path) = self.try_resolve_in_root(root, name) {
+            if let Some(path) = Self::try_resolve_in_root(root, name) {
                 return Some(path);
             }
         }
@@ -38,7 +40,7 @@ impl FileResolver {
     }
 
     /// Try to resolve a name in a specific root directory
-    fn try_resolve_in_root(&self, root: &Path, name: &QualifiedName) -> Option<PathBuf> {
+    fn try_resolve_in_root(root: &Path, name: &QualifiedName) -> Option<PathBuf> {
         // Convert namespace segments to path: App\Models\User -> App/Models/User.php
         let relative_path: PathBuf = name.segments.iter().collect();
         let with_ext = relative_path.with_extension("php");
@@ -64,11 +66,8 @@ impl FileResolver {
 
         // Try all lowercase
         // App\Models\User -> app/models/user.php
-        let lowercase_segments: Vec<String> = name
-            .segments
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
+        let lowercase_segments: Vec<String> =
+            name.segments.iter().map(|s| s.to_lowercase()).collect();
         let relative_path: PathBuf = lowercase_segments.iter().collect();
         let with_ext = relative_path.with_extension("php");
         let path = root.join(&with_ext);
@@ -80,14 +79,10 @@ impl FileResolver {
     }
 
     /// Get all root directories
+    #[must_use]
+    #[allow(dead_code)]
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
-    }
-}
-
-impl Default for FileResolver {
-    fn default() -> Self {
-        Self { roots: Vec::new() }
     }
 }
 

@@ -27,7 +27,8 @@ impl Program {
 
     /// Create an empty program
     #[must_use]
-    pub fn empty() -> Self {
+    #[allow(dead_code)]
+    pub const fn empty() -> Self {
         Self {
             units: Vec::new(),
             functions: Vec::new(),

@@ -1,6 +1,6 @@
 //! Namespace and use declaration parsing
 
-use crate::ast::{NamespaceDecl, QualifiedName, Span, TraitUse, UseDecl, UseItem, UseKind};
+use crate::ast::{NamespaceDecl, QualifiedName, TraitUse, UseDecl, UseItem, UseKind};
 use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;
@@ -27,7 +27,11 @@ impl Parser {
             segments.push(segment.text.clone());
         }
 
-        Ok(QualifiedName::new(segments, is_absolute, start.merge(self.span())))
+        Ok(QualifiedName::new(
+            segments,
+            is_absolute,
+            start.merge(self.span()),
+        ))
     }
 
     /// Parse namespace declaration: namespace App\Models;
@@ -97,7 +101,7 @@ impl Parser {
         })
     }
 
-    /// Parse trait use inside a class: use SomeTrait;
+    /// Parse trait use inside a class: `use SomeTrait;`
     pub(super) fn parse_trait_use(&mut self) -> Result<TraitUse> {
         let start = self.span();
         self.expect(TokenKind::Use)?;
@@ -122,7 +126,10 @@ impl Parser {
     }
 
     /// Try to parse a type that might be a qualified name
-    pub(super) fn parse_type_with_qualified_name(&mut self) -> Result<(crate::ast::Type, Option<QualifiedName>)> {
+    #[allow(dead_code)]
+    pub(super) fn parse_type_with_qualified_name(
+        &mut self,
+    ) -> Result<(crate::ast::Type, Option<QualifiedName>)> {
         let is_ref = self.match_token(TokenKind::Ampersand);
         let is_nullable = self.match_token(TokenKind::Not);
 

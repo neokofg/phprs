@@ -13,6 +13,7 @@ use crate::lexer::{SpannedToken, TokenKind};
 use miette::Result;
 
 /// Parse tokens into an AST.
+#[allow(dead_code)]
 pub fn parse(tokens: Vec<SpannedToken>) -> Result<Program> {
     let mut parser = Parser::new(tokens);
     parser.parse_program()
@@ -130,7 +131,8 @@ impl Parser {
                 }
                 TokenKind::Namespace => {
                     return Err(CompileError::ParserError {
-                        message: "Namespace declaration must be at the beginning of the file".to_string(),
+                        message: "Namespace declaration must be at the beginning of the file"
+                            .to_string(),
                         span: self.current().span,
                     }
                     .into());
@@ -194,6 +196,7 @@ impl Parser {
     }
 
     /// Parse a program (backwards compatible - wraps compilation unit)
+    #[allow(dead_code)]
     fn parse_program(&mut self) -> Result<Program> {
         let unit = self.parse_compilation_unit()?;
         Ok(Program::from_unit(unit))

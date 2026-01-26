@@ -3,10 +3,10 @@
 use super::Span;
 use std::path::PathBuf;
 
-/// Qualified name: App\Models\User
+/// Qualified name: `App\Models\User`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualifiedName {
-    /// Name segments: ["App", "Models", "User"]
+    /// Name segments: `["App", "Models", "User"]`
     pub segments: Vec<String>,
     /// Starts with \ (absolute path)
     pub is_absolute: bool,
@@ -16,6 +16,7 @@ pub struct QualifiedName {
 impl QualifiedName {
     /// Create a new qualified name
     #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn new(segments: Vec<String>, is_absolute: bool, span: Span) -> Self {
         Self {
             segments,
@@ -53,7 +54,7 @@ impl QualifiedName {
         self.segments.len() == 1 && !self.is_absolute
     }
 
-    /// Convert to mangled name for codegen: App\Models\User → App__Models__User
+    /// Convert to mangled name for codegen: `App\Models\User` → `App__Models__User`
     #[must_use]
     pub fn mangle(&self) -> String {
         self.segments.join("__")
@@ -66,10 +67,11 @@ impl std::fmt::Display for QualifiedName {
     }
 }
 
-/// namespace App\Models;
+/// namespace `App\Models`;
 #[derive(Debug, Clone)]
 pub struct NamespaceDecl {
     pub name: QualifiedName,
+    #[allow(dead_code)]
     pub span: Span,
 }
 
@@ -77,7 +79,7 @@ pub struct NamespaceDecl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum UseKind {
     #[default]
-    Class,    // use App\User;
+    Class, // use App\User;
     Function, // use function App\format;
     Const,    // use const App\DEBUG;
 }
@@ -92,15 +94,16 @@ impl std::fmt::Display for UseKind {
     }
 }
 
-/// Single use item: App\User as U
+/// Single use item: `App\User as U`
 #[derive(Debug, Clone)]
 pub struct UseItem {
-    /// Full path: App\User
+    /// Full path: `App\User`
     pub path: QualifiedName,
     /// Optional alias: as U
     pub alias: Option<String>,
     /// Import type
     pub kind: UseKind,
+    #[allow(dead_code)]
     pub span: Span,
 }
 
@@ -114,10 +117,11 @@ impl UseItem {
     }
 }
 
-/// Top-level use declaration: use App\User, App\Post as P;
+/// Top-level use declaration: `use App\User, App\Post as P;`
 #[derive(Debug, Clone)]
 pub struct UseDecl {
     pub items: Vec<UseItem>,
+    #[allow(dead_code)]
     pub span: Span,
 }
 
@@ -125,11 +129,12 @@ pub struct UseDecl {
 #[derive(Debug, Clone)]
 pub struct TraitUse {
     pub traits: Vec<QualifiedName>,
+    #[allow(dead_code)]
     pub span: Span,
 }
 
 /// A compilation unit (single file)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CompilationUnit {
     /// Optional namespace declaration
     pub namespace: Option<NamespaceDecl>,
@@ -148,32 +153,22 @@ pub struct CompilationUnit {
 impl CompilationUnit {
     /// Get the namespace prefix for this unit
     #[must_use]
+    #[allow(dead_code)]
     pub fn namespace_prefix(&self) -> Option<&QualifiedName> {
         self.namespace.as_ref().map(|ns| &ns.name)
     }
 
     /// Qualify a name with this unit's namespace
     #[must_use]
+    #[allow(dead_code)]
     pub fn qualify_name(&self, name: &str, span: Span) -> QualifiedName {
-        if let Some(ns) = &self.namespace {
-            let mut segments = ns.name.segments.clone();
-            segments.push(name.to_string());
-            QualifiedName::new(segments, false, span)
-        } else {
-            QualifiedName::simple(name.to_string(), span)
-        }
-    }
-}
-
-impl Default for CompilationUnit {
-    fn default() -> Self {
-        Self {
-            namespace: None,
-            uses: Vec::new(),
-            functions: Vec::new(),
-            classes: Vec::new(),
-            traits: Vec::new(),
-            file_path: None,
-        }
+        self.namespace.as_ref().map_or_else(
+            || QualifiedName::simple(name.to_string(), span),
+            |ns| {
+                let mut segments = ns.name.segments.clone();
+                segments.push(name.to_string());
+                QualifiedName::new(segments, false, span)
+            },
+        )
     }
 }

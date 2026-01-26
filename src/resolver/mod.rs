@@ -8,7 +8,7 @@ mod symbol_table;
 
 pub use dependency_graph::DependencyGraph;
 pub use file_resolver::FileResolver;
-pub use symbol_table::{Symbol, SymbolTable};
+pub use symbol_table::SymbolTable;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,14 +54,18 @@ impl ModuleResolver {
     }
 
     /// Add a root directory for file resolution
+    #[allow(dead_code)]
     pub fn add_root(&mut self, root: PathBuf) {
         self.file_resolver.add_root(root);
     }
 
     /// Resolve a compilation unit and all its dependencies
+    ///
+    /// # Errors
+    /// Returns an error if resolution fails (circular dependency, file not found, etc.)
     pub fn resolve(&mut self, entry_path: PathBuf, unit: CompilationUnit) -> Result<Program> {
         // Load the entry unit
-        self.load_unit(entry_path.clone(), unit)?;
+        self.load_unit(entry_path, unit);
 
         // Process all pending imports until no more dependencies
         self.resolve_all_imports()?;
@@ -71,10 +75,10 @@ impl ModuleResolver {
     }
 
     /// Load a compilation unit and register its symbols
-    fn load_unit(&mut self, path: PathBuf, mut unit: CompilationUnit) -> Result<()> {
+    fn load_unit(&mut self, path: PathBuf, mut unit: CompilationUnit) {
         // Skip if already loaded
         if self.loaded_units.contains_key(&path) {
-            return Ok(());
+            return;
         }
 
         // Add to dependency graph
@@ -98,7 +102,7 @@ impl ModuleResolver {
 
         // Register and qualify classes
         for class in &mut unit.classes {
-            let qualified = self.qualify_name(&symbol_table, &class.name);
+            let qualified = Self::qualify_name(&symbol_table, &class.name);
             class.qualified_name = Some(qualified.clone());
             symbol_table.define_class(&class.name, qualified.clone());
             self.class_locations
@@ -125,14 +129,17 @@ impl ModuleResolver {
                 }
             }
             if !resolved_interfaces.is_empty() {
-                class.interfaces_qualified = resolved_interfaces.clone();
-                class.interfaces = resolved_interfaces.iter().map(|qn| qn.full_path()).collect();
+                class.interfaces_qualified.clone_from(&resolved_interfaces);
+                class.interfaces = resolved_interfaces
+                    .iter()
+                    .map(QualifiedName::full_path)
+                    .collect();
             }
         }
 
         // Register and qualify functions
         for func in &unit.functions {
-            let qualified = self.qualify_name(&symbol_table, &func.name);
+            let qualified = Self::qualify_name(&symbol_table, &func.name);
             symbol_table.define_function(&func.name, qualified.clone());
             self.function_locations
                 .insert(qualified.full_path(), path.clone());
@@ -140,7 +147,7 @@ impl ModuleResolver {
 
         // Register and qualify traits
         for trait_def in &mut unit.traits {
-            let qualified = self.qualify_name(&symbol_table, &trait_def.name);
+            let qualified = Self::qualify_name(&symbol_table, &trait_def.name);
             trait_def.qualified_name = Some(qualified.clone());
             symbol_table.define_trait(&trait_def.name, qualified.clone());
             self.trait_locations
@@ -151,25 +158,24 @@ impl ModuleResolver {
         unit.file_path = Some(path.clone());
         self.symbol_tables.insert(path.clone(), symbol_table);
         self.loaded_units.insert(path, unit);
-
-        Ok(())
     }
 
     /// Qualify a simple name with the current namespace
-    fn qualify_name(&self, symbol_table: &SymbolTable, name: &str) -> QualifiedName {
-        if let Some(ns) = &symbol_table.namespace {
-            let mut segments = ns.segments.clone();
-            segments.push(name.to_string());
-            QualifiedName::new(segments, false, Span::default())
-        } else {
-            QualifiedName::simple(name.to_string(), Span::default())
-        }
+    fn qualify_name(symbol_table: &SymbolTable, name: &str) -> QualifiedName {
+        symbol_table.namespace.as_ref().map_or_else(
+            || QualifiedName::simple(name.to_string(), Span::default()),
+            |ns| {
+                let mut segments = ns.segments.clone();
+                segments.push(name.to_string());
+                QualifiedName::new(segments, false, Span::default())
+            },
+        )
     }
 
     /// Resolve all pending imports (loops until no more dependencies)
     fn resolve_all_imports(&mut self) -> Result<()> {
-        let mut iteration = 0;
         const MAX_ITERATIONS: usize = 100;
+        let mut iteration = 0;
 
         loop {
             iteration += 1;
@@ -276,8 +282,8 @@ impl ModuleResolver {
 
             // Load the file if not already loaded
             if !self.loaded_units.contains_key(&file_path) {
-                let unit = self.load_file(&file_path)?;
-                self.load_unit(file_path, unit)?;
+                let unit = Self::load_file(&file_path)?;
+                self.load_unit(file_path, unit);
             }
         }
         // If file not found, we'll let the type checker handle the error
@@ -286,7 +292,7 @@ impl ModuleResolver {
     }
 
     /// Load and parse a PHP file
-    fn load_file(&self, path: &PathBuf) -> Result<CompilationUnit> {
+    fn load_file(path: &PathBuf) -> Result<CompilationUnit> {
         let source = std::fs::read_to_string(path).map_err(|e| CompileError::ResolverError {
             message: format!("Failed to read file {}: {}", path.display(), e),
         })?;
@@ -298,10 +304,13 @@ impl ModuleResolver {
     /// Build the final program from all loaded units
     fn build_program(&mut self) -> Result<Program> {
         // Get topological order (dependencies first)
-        let order = self.dependency_graph.topological_order().unwrap_or_else(|| {
-            // If there's a cycle, just use arbitrary order
-            self.loaded_units.keys().cloned().collect()
-        });
+        let order = self
+            .dependency_graph
+            .topological_order()
+            .unwrap_or_else(|| {
+                // If there's a cycle, just use arbitrary order
+                self.loaded_units.keys().cloned().collect()
+            });
 
         let mut all_functions = Vec::new();
         let mut all_classes = Vec::new();
@@ -370,7 +379,7 @@ impl ModuleResolver {
                 if !resolved_interfaces.is_empty() {
                     class.interfaces = resolved_interfaces
                         .iter()
-                        .map(|qn| qn.full_path())
+                        .map(QualifiedName::full_path)
                         .collect();
                     class.interfaces_qualified = resolved_interfaces;
                 }
@@ -381,6 +390,7 @@ impl ModuleResolver {
     }
 
     /// Get all loaded units
+    #[allow(dead_code)]
     pub fn units(&self) -> impl Iterator<Item = (&PathBuf, &CompilationUnit)> {
         self.loaded_units.iter()
     }

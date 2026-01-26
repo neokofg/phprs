@@ -90,7 +90,10 @@ fn compile_file(
         ast::Program::from_unit(unit)
     } else {
         // Complex case: resolve imports
-        let input_dir = input.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let input_dir = input
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
         let mut resolver = resolver::ModuleResolver::new(vec![input_dir]);
         resolver.resolve(input.to_path_buf(), unit)?
     };

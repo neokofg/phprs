@@ -25,8 +25,10 @@ pub struct ClassRegistry {
 #[derive(Debug, Clone)]
 pub struct TraitInfo {
     /// Simple trait name
+    #[allow(dead_code)]
     pub name: String,
     /// Fully qualified name
+    #[allow(dead_code)]
     pub qualified_name: Option<QualifiedName>,
     /// Trait properties
     pub properties: Vec<PropertyInfo>,
@@ -157,7 +159,7 @@ impl ClassRegistry {
             let key = class
                 .qualified_name
                 .as_ref()
-                .map_or_else(|| class.name.clone(), |qn| qn.full_path());
+                .map_or_else(|| class.name.clone(), QualifiedName::full_path);
 
             let info = ClassInfo {
                 name: class.name.clone(),
@@ -193,7 +195,7 @@ impl ClassRegistry {
         class
             .qualified_name
             .as_ref()
-            .map_or_else(|| class.name.clone(), |qn| qn.full_path())
+            .map_or_else(|| class.name.clone(), QualifiedName::full_path)
     }
 
     /// Topological sort of classes by inheritance
@@ -234,12 +236,13 @@ impl ClassRegistry {
     }
 
     /// Build complete class info including inherited members
+    #[allow(clippy::too_many_lines)]
     fn build_class_info(&mut self, class: &ClassDef) {
         let class_key = Self::get_class_key(class);
         let mangled_class_name = class
             .qualified_name
             .as_ref()
-            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+            .map_or_else(|| class.name.clone(), QualifiedName::mangle);
 
         let mut properties = Vec::new();
         let mut methods = Vec::new();
@@ -441,10 +444,10 @@ impl ClassRegistry {
             Type::Int => 8,
             Type::Float => 8,
             Type::Bool => 1,
-            Type::String => 8, // Pointer
+            Type::String => 8,                        // Pointer
             Type::Class(_) | Type::Interface(_) => 8, // Pointer
-            Type::Array(_) => 8, // Pointer
-            Type::Ref(_) | Type::RefMut(_) => 8, // Pointer
+            Type::Array(_) => 8,                      // Pointer
+            Type::Ref(_) | Type::RefMut(_) => 8,      // Pointer
             Type::Nullable(inner) => self.type_size(inner),
             _ => 8,
         }
@@ -482,7 +485,7 @@ impl ClassRegistry {
     }
 
     /// Check if child class is a subtype of parent class
-    #[must_use] 
+    #[must_use]
     pub fn is_subclass(&self, child: &str, parent: &str) -> bool {
         if child == parent {
             return true;
@@ -498,7 +501,7 @@ impl ClassRegistry {
     }
 
     /// Check if a member is accessible from a given context
-    #[must_use] 
+    #[must_use]
     pub fn is_accessible(
         &self,
         target_class: &str,
@@ -525,6 +528,7 @@ impl ClassRegistry {
 
     /// Get trait info by name
     #[must_use]
+    #[allow(dead_code)]
     pub fn get_trait(&self, name: &str) -> Option<&TraitInfo> {
         // First try exact match
         if let Some(info) = self.traits.get(name) {
@@ -536,12 +540,13 @@ impl ClassRegistry {
 
     /// Check if a trait exists
     #[must_use]
+    #[allow(dead_code)]
     pub fn trait_exists(&self, name: &str) -> bool {
         self.get_trait(name).is_some()
     }
 
     /// Get constructor info for a class
-    #[must_use] 
+    #[must_use]
     pub fn get_constructor(&self, class_name: &str) -> Option<&MethodInfo> {
         self.get_method(class_name, "__construct")
     }
@@ -550,7 +555,7 @@ impl ClassRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Span};
+    use crate::ast::Span;
 
     fn make_class(name: &str, parent: Option<&str>) -> ClassDef {
         ClassDef {

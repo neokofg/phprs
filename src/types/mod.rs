@@ -17,7 +17,7 @@ pub use class_registry::ClassRegistry;
 
 use std::collections::HashMap;
 
-use crate::ast::{Function, Program, QualifiedName, Span, Type, UseKind, Visibility};
+use crate::ast::{Function, Program, QualifiedName, Type, Visibility};
 use crate::errors::CompileError;
 use miette::Result;
 
@@ -98,6 +98,7 @@ impl TypeChecker {
     }
 
     /// Resolve a qualified name
+    #[allow(dead_code)]
     pub(crate) fn resolve_qualified_name(&self, qn: &QualifiedName) -> String {
         // If absolute or multi-segment, return as-is
         if qn.is_absolute || qn.segments.len() > 1 {
@@ -174,7 +175,10 @@ impl TypeChecker {
 
         // Class subtyping: child class is compatible with parent type
         if let (Type::Class(expected_class), Type::Class(actual_class)) = (expected, actual) {
-            if self.class_registry.is_subclass(actual_class, expected_class) {
+            if self
+                .class_registry
+                .is_subclass(actual_class, expected_class)
+            {
                 return true;
             }
         }
@@ -237,7 +241,7 @@ impl TypeChecker {
             let class_key = class
                 .qualified_name
                 .as_ref()
-                .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+                .map_or_else(|| class.name.clone(), QualifiedName::mangle);
 
             for method in &class.methods {
                 let mangled_name = format!("{}_{}", class_key, method.name);
@@ -250,11 +254,13 @@ impl TypeChecker {
         // Third pass: type check classes and update with typed expressions
         // Set up context for each unit if we have units
         let mut typed_classes = Vec::new();
-        for (i, class) in program.classes.iter().enumerate() {
+        for class in &program.classes {
             // Find which unit this class belongs to and set up context
-            if let Some(unit) = program.units.iter().find(|u| {
-                u.classes.iter().any(|c| c.name == class.name)
-            }) {
+            if let Some(unit) = program
+                .units
+                .iter()
+                .find(|u| u.classes.iter().any(|c| c.name == class.name))
+            {
                 self.setup_for_unit(unit);
             }
             typed_classes.push(self.check_class(class)?);
@@ -264,9 +270,11 @@ impl TypeChecker {
         let mut typed_functions = Vec::new();
         for func in &program.functions {
             // Find which unit this function belongs to and set up context
-            if let Some(unit) = program.units.iter().find(|u| {
-                u.functions.iter().any(|f| f.name == func.name)
-            }) {
+            if let Some(unit) = program
+                .units
+                .iter()
+                .find(|u| u.functions.iter().any(|f| f.name == func.name))
+            {
                 self.setup_for_unit(unit);
             }
             typed_functions.push(self.check_function(func)?);
@@ -308,7 +316,7 @@ impl TypeChecker {
             class
                 .qualified_name
                 .as_ref()
-                .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+                .map_or_else(|| class.name.clone(), QualifiedName::full_path),
         );
 
         // Type check methods
@@ -413,7 +421,7 @@ impl TypeChecker {
                 let class_type_name = class
                     .qualified_name
                     .as_ref()
-                    .map_or_else(|| class.name.clone(), |qn| qn.full_path());
+                    .map_or_else(|| class.name.clone(), QualifiedName::full_path);
                 self.define_var("this", Type::Class(class_type_name));
             }
 

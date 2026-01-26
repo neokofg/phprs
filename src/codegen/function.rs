@@ -17,10 +17,10 @@ use cranelift::prelude::*;
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 
+use super::class::ClassCodeGen;
 use crate::ast::{BinaryOp, Expr, ExprKind, Stmt, StmtKind, Type, UnaryOp};
 use crate::errors::CompileError;
 use crate::types::ClassRegistry;
-use super::class::ClassCodeGen;
 use miette::Result;
 
 pub struct FunctionCompiler<'a, 'b> {
@@ -145,7 +145,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 for expr in exprs {
                     let val = self.compile_expr(expr)?;
                     // Infer type from expression kind if not set
-                    let ty = expr.ty.as_ref().unwrap_or_else(|| self.infer_type(&expr.kind));
+                    let ty = expr
+                        .ty
+                        .as_ref()
+                        .unwrap_or_else(|| self.infer_type(&expr.kind));
                     self.emit_print(val, ty)?;
                 }
             }
@@ -499,13 +502,17 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let object_size = class_info.object_size;
 
         // 1. Allocate memory: malloc(size)
-        let malloc_id = *self.functions.get("malloc").ok_or_else(|| {
-            CompileError::CodegenError {
-                message: "malloc not found".to_string(),
-            }
-        })?;
+        let malloc_id =
+            *self
+                .functions
+                .get("malloc")
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: "malloc not found".to_string(),
+                })?;
 
-        let malloc_ref = self.module.declare_func_in_func(malloc_id, self.builder.func);
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
         let size_val = self.builder.ins().iconst(types::I64, object_size as i64);
         let malloc_call = self.builder.ins().call(malloc_ref, &[size_val]);
         let object_ptr = self.builder.inst_results(malloc_call)[0];
@@ -515,7 +522,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             // Mangle class name for vtable lookup: App\Models\User -> App__Models__User
             let mangled_class = class_name.replace('\\', "__");
             if let Some(vtable_id) = class_codegen.get_vtable(&mangled_class) {
-                let vtable_local = self.module.declare_data_in_func(vtable_id, self.builder.func);
+                let vtable_local = self
+                    .module
+                    .declare_data_in_func(vtable_id, self.builder.func);
                 let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_local);
                 self.builder
                     .ins()
@@ -606,19 +615,16 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     /// Compile `$obj->property` access
-    fn compile_property_access_expr(
-        &mut self,
-        object: &Expr,
-        property: &str,
-    ) -> Result<Value> {
+    fn compile_property_access_expr(&mut self, object: &Expr, property: &str) -> Result<Value> {
         let obj_ptr = self.compile_expr(object)?;
         let ptr_ty = self.module.target_config().pointer_type();
 
         // Get class name from expression type
-        let class_name = self.resolve_class_name(object.ty.as_ref())
-            .ok_or_else(|| CompileError::CodegenError {
+        let class_name = self.resolve_class_name(object.ty.as_ref()).ok_or_else(|| {
+            CompileError::CodegenError {
                 message: "Cannot access property on non-object".to_string(),
-            })?;
+            }
+        })?;
 
         // Get property info
         let prop_info = self
@@ -651,10 +657,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let ptr_ty = self.module.target_config().pointer_type();
 
         // Get class name from expression type
-        let class_name = self.resolve_class_name(object.ty.as_ref())
-            .ok_or_else(|| CompileError::CodegenError {
+        let class_name = self.resolve_class_name(object.ty.as_ref()).ok_or_else(|| {
+            CompileError::CodegenError {
                 message: "Cannot call method on non-object".to_string(),
-            })?;
+            }
+        })?;
 
         // Get method info - clone to avoid borrow issues
         let method_info = self
@@ -676,17 +683,14 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         if let Some(vtable_idx) = method_info.vtable_index {
             // Virtual method call through vtable
             // 1. Load vtable pointer from object (offset 0)
-            let vtable_ptr = self
-                .builder
-                .ins()
-                .load(ptr_ty, MemFlags::new(), obj_ptr, 0);
+            let vtable_ptr = self.builder.ins().load(ptr_ty, MemFlags::new(), obj_ptr, 0);
 
             // 2. Load method pointer from vtable
             let method_offset = (vtable_idx * ptr_ty.bytes() as usize) as i32;
-            let method_ptr = self
-                .builder
-                .ins()
-                .load(ptr_ty, MemFlags::new(), vtable_ptr, method_offset);
+            let method_ptr =
+                self.builder
+                    .ins()
+                    .load(ptr_ty, MemFlags::new(), vtable_ptr, method_offset);
 
             // 3. Build signature for indirect call
             let mut sig = self.module.make_signature();
@@ -719,11 +723,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         } else {
             // Static method or no vtable - direct call
             let mangled_name = method_info.mangled_name;
-            let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
-                CompileError::CodegenError {
-                    message: format!("Method {mangled_name} not found"),
-                }
-            })?;
+            let func_id =
+                *self
+                    .functions
+                    .get(&mangled_name)
+                    .ok_or_else(|| CompileError::CodegenError {
+                        message: format!("Method {mangled_name} not found"),
+                    })?;
 
             let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
             let call = self.builder.ins().call(func_ref, &call_args);
@@ -738,11 +744,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     /// Compile `ClassName::$property` access
-    fn compile_static_property_expr(
-        &mut self,
-        class_name: &str,
-        property: &str,
-    ) -> Result<Value> {
+    fn compile_static_property_expr(&mut self, class_name: &str, property: &str) -> Result<Value> {
         let ptr_ty = self.module.target_config().pointer_type();
 
         // Get static property data
@@ -750,9 +752,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .class_codegen
             .and_then(|c| c.get_static_property(class_name, property))
             .ok_or_else(|| CompileError::CodegenError {
-                message: format!(
-                    "Static property '{class_name}::${property}' not found"
-                ),
+                message: format!("Static property '{class_name}::${property}' not found"),
             })?;
 
         // Get property type
@@ -793,17 +793,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             .class_codegen
             .and_then(|c| c.get_static_property(class_name, property))
             .ok_or_else(|| CompileError::CodegenError {
-                message: format!(
-                    "Static property '{class_name}::${property}' not found"
-                ),
+                message: format!("Static property '{class_name}::${property}' not found"),
             })?;
 
         // Store value to global data
         let data_local = self.module.declare_data_in_func(data_id, self.builder.func);
         let data_ptr = self.builder.ins().symbol_value(ptr_ty, data_local);
-        self.builder
-            .ins()
-            .store(MemFlags::new(), val, data_ptr, 0);
+        self.builder.ins().store(MemFlags::new(), val, data_ptr, 0);
 
         Ok(val)
     }
@@ -819,11 +815,13 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         // Mangle class name: App\Models\Entity -> App__Models__Entity
         let mangled_class = class_name.replace('\\', "__");
         let mangled_name = format!("{mangled_class}_{method}");
-        let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
-            CompileError::CodegenError {
-                message: format!("Static method {class_name}::{method} not found"),
-            }
-        })?;
+        let func_id =
+            *self
+                .functions
+                .get(&mangled_name)
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!("Static method {class_name}::{method} not found"),
+                })?;
 
         let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
 
@@ -868,10 +866,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let val = self.compile_expr(value)?;
 
         // Get class name from expression type
-        let class_name = self.resolve_class_name(object.ty.as_ref())
-            .ok_or_else(|| CompileError::CodegenError {
+        let class_name = self.resolve_class_name(object.ty.as_ref()).ok_or_else(|| {
+            CompileError::CodegenError {
                 message: "Cannot assign property on non-object".to_string(),
-            })?;
+            }
+        })?;
 
         // Get property info
         let prop_info = self
@@ -980,16 +979,24 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
 
     fn concat_strings(&mut self, lhs: Value, rhs: Value) -> Result<Value> {
         let strlen_id = *self.functions.get("strlen").unwrap();
-        let strlen_ref = self.module.declare_func_in_func(strlen_id, self.builder.func);
+        let strlen_ref = self
+            .module
+            .declare_func_in_func(strlen_id, self.builder.func);
 
         let malloc_id = *self.functions.get("malloc").unwrap();
-        let malloc_ref = self.module.declare_func_in_func(malloc_id, self.builder.func);
+        let malloc_ref = self
+            .module
+            .declare_func_in_func(malloc_id, self.builder.func);
 
         let strcpy_id = *self.functions.get("strcpy").unwrap();
-        let strcpy_ref = self.module.declare_func_in_func(strcpy_id, self.builder.func);
+        let strcpy_ref = self
+            .module
+            .declare_func_in_func(strcpy_id, self.builder.func);
 
         let strcat_id = *self.functions.get("strcat").unwrap();
-        let strcat_ref = self.module.declare_func_in_func(strcat_id, self.builder.func);
+        let strcat_ref = self
+            .module
+            .declare_func_in_func(strcat_id, self.builder.func);
 
         // Get lengths
         let len1_call = self.builder.ins().call(strlen_ref, &[lhs]);
@@ -1139,10 +1146,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     /// Emit vtable initialization code at the start of `main()`
-    pub fn emit_vtable_init(
-        &mut self,
-        all_functions: &HashMap<String, FuncId>,
-    ) -> Result<()> {
+    pub fn emit_vtable_init(&mut self, all_functions: &HashMap<String, FuncId>) -> Result<()> {
         let ptr_ty = self.module.target_config().pointer_type();
         let ptr_size = ptr_ty.bytes() as usize;
 
@@ -1162,10 +1166,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             }
 
             // Get mangled class name for vtable lookup
-            let mangled_class_key = class_info
-                .qualified_name
-                .as_ref()
-                .map_or_else(|| class_info.name.clone(), |qn| qn.mangle());
+            let mangled_class_key = class_info.qualified_name.as_ref().map_or_else(
+                || class_info.name.clone(),
+                crate::ast::QualifiedName::mangle,
+            );
 
             // Get vtable data address
             let vtable_id = match codegen.get_vtable(&mangled_class_key) {
@@ -1179,10 +1183,10 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             let vtable_ptr = self.builder.ins().symbol_value(ptr_ty, vtable_ref);
 
             // Get qualified class name for method lookup
-            let class_lookup_name = class_info
-                .qualified_name
-                .as_ref()
-                .map_or_else(|| class_info.name.clone(), |qn| qn.full_path());
+            let class_lookup_name = class_info.qualified_name.as_ref().map_or_else(
+                || class_info.name.clone(),
+                crate::ast::QualifiedName::full_path,
+            );
 
             // Fill in each vtable slot with the function address
             for (idx, method_name) in class_info.vtable_layout.iter().enumerate() {
@@ -1191,9 +1195,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     codegen.find_method_impl(&class_lookup_name, method_name, registry);
 
                 if let Some(&func_id) = all_functions.get(&mangled_name) {
-                    let func_ref = self
-                        .module
-                        .declare_func_in_func(func_id, self.builder.func);
+                    let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                     let func_addr = self.builder.ins().func_addr(ptr_ty, func_ref);
 
                     // Store function address in vtable

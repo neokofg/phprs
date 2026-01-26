@@ -11,12 +11,8 @@ use super::TypeChecker;
 impl TypeChecker {
     pub(super) fn check_stmt(&mut self, stmt: &Stmt, return_type: &Type) -> Result<Stmt> {
         let kind = match &stmt.kind {
-            StmtKind::Let { name, ty, init } => {
-                self.check_let_stmt(name, ty, init, stmt)?
-            }
-            StmtKind::Assign { target, value } => {
-                self.check_assign_stmt(target, value, stmt)?
-            }
+            StmtKind::Let { name, ty, init } => self.check_let_stmt(name, ty, init, stmt)?,
+            StmtKind::Assign { target, value } => self.check_assign_stmt(target, value, stmt)?,
             StmtKind::CompoundAssign { target, op, value } => {
                 let value_typed = self.check_expr(value)?;
                 StmtKind::CompoundAssign {
@@ -29,16 +25,12 @@ impl TypeChecker {
                 let typed = self.check_expr(expr)?;
                 StmtKind::Expr(typed)
             }
-            StmtKind::Return(expr) => {
-                self.check_return_stmt(expr, return_type, stmt)?
-            }
+            StmtKind::Return(expr) => self.check_return_stmt(expr, return_type, stmt)?,
             StmtKind::If {
                 condition,
                 then_branch,
                 else_branch,
-            } => {
-                self.check_if_stmt(condition, then_branch, else_branch, return_type)?
-            }
+            } => self.check_if_stmt(condition, then_branch, else_branch, return_type)?,
             StmtKind::While { condition, body } => {
                 self.check_while_stmt(condition, body, return_type)?
             }
@@ -47,9 +39,7 @@ impl TypeChecker {
                 condition,
                 update,
                 body,
-            } => {
-                self.check_for_stmt(init, condition, update, body, return_type)?
-            }
+            } => self.check_for_stmt(init, condition, update, body, return_type)?,
             StmtKind::Echo(exprs) => {
                 let mut typed = Vec::new();
                 for e in exprs {
@@ -86,9 +76,7 @@ impl TypeChecker {
             let resolved_ty = self.resolve_type(declared_ty);
             if !self.types_compatible(&resolved_ty, &init_type) {
                 return Err(CompileError::TypeError {
-                    message: format!(
-                        "Type mismatch: expected {resolved_ty}, found {init_type}"
-                    ),
+                    message: format!("Type mismatch: expected {resolved_ty}, found {init_type}"),
                     span: stmt.span.into(),
                 }
                 .into());
@@ -161,9 +149,7 @@ impl TypeChecker {
         } else {
             if *return_type != Type::Void {
                 return Err(CompileError::TypeError {
-                    message: format!(
-                        "Return type mismatch: expected {return_type}, found void"
-                    ),
+                    message: format!("Return type mismatch: expected {return_type}, found void"),
                     span: stmt.span.into(),
                 }
                 .into());

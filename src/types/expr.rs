@@ -22,7 +22,9 @@ impl TypeChecker {
                 (ExprKind::Variable(name.clone()), ty)
             }
 
-            ExprKind::Binary { left, op, right } => self.check_binary(left, *op, right, expr.span)?,
+            ExprKind::Binary { left, op, right } => {
+                self.check_binary(left, *op, right, expr.span)?
+            }
 
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, expr.span)?,
 
@@ -46,7 +48,9 @@ impl TypeChecker {
                 )
             }
 
-            ExprKind::Assign { target, value } => self.check_assign_expr(target, value, expr.span)?,
+            ExprKind::Assign { target, value } => {
+                self.check_assign_expr(target, value, expr.span)?
+            }
 
             ExprKind::PrefixOp { op, target } => {
                 let ty = self.lookup_var(target).cloned().unwrap_or(Type::Int);
@@ -365,11 +369,7 @@ impl TypeChecker {
         ))
     }
 
-    fn check_property_access(
-        &mut self,
-        object: &Expr,
-        property: &str,
-    ) -> Result<(ExprKind, Type)> {
+    fn check_property_access(&mut self, object: &Expr, property: &str) -> Result<(ExprKind, Type)> {
         let object_typed = self.check_expr(object)?;
         let object_ty = object_typed.ty.clone().unwrap_or(Type::Unknown);
 
@@ -425,7 +425,10 @@ impl TypeChecker {
                 (
                     m.visibility,
                     m.is_static,
-                    m.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+                    m.params
+                        .iter()
+                        .map(|(_, ty)| ty.clone())
+                        .collect::<Vec<_>>(),
                     m.return_type.clone(),
                 )
             });
@@ -466,7 +469,7 @@ impl TypeChecker {
                     let arg_ty = arg_typed.ty.clone().unwrap_or(Type::Unknown);
 
                     // Resolve expected type for comparison
-                    let resolved_expected = self.resolve_type(&expected_ty);
+                    let resolved_expected = self.resolve_type(expected_ty);
                     if !self.types_compatible(&resolved_expected, &arg_ty) {
                         return Err(CompileError::TypeError {
                             message: format!(
@@ -519,10 +522,13 @@ impl TypeChecker {
         let resolved_class = if class_name == "parent" {
             if let Some(current) = &self.current_class {
                 if let Some(class_info) = self.class_registry.get_class(current) {
-                    class_info.parent.clone().ok_or_else(|| CompileError::TypeError {
-                        message: "Cannot use parent:: - class has no parent".to_string(),
-                        span: Span::default().into(),
-                    })?
+                    class_info
+                        .parent
+                        .clone()
+                        .ok_or_else(|| CompileError::TypeError {
+                            message: "Cannot use parent:: - class has no parent".to_string(),
+                            span: Span::default().into(),
+                        })?
                 } else {
                     return Err(CompileError::TypeError {
                         message: "Cannot use parent:: outside of class".to_string(),
@@ -557,7 +563,10 @@ impl TypeChecker {
             .map(|m| {
                 (
                     m.visibility,
-                    m.params.iter().map(|(_, ty)| ty.clone()).collect::<Vec<_>>(),
+                    m.params
+                        .iter()
+                        .map(|(_, ty)| ty.clone())
+                        .collect::<Vec<_>>(),
                     m.return_type.clone(),
                 )
             });
@@ -604,9 +613,7 @@ impl TypeChecker {
             (typed, return_type)
         } else {
             return Err(CompileError::TypeError {
-                message: format!(
-                    "Static method '{method}' not found in class '{resolved_class}'"
-                ),
+                message: format!("Static method '{method}' not found in class '{resolved_class}'"),
                 span: Span::default().into(),
             }
             .into());

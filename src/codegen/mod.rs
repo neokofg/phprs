@@ -17,9 +17,9 @@ use cranelift::prelude::*;
 use cranelift_module::{FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::ast::{Function, Program, Type};
+use crate::ast::{Function, Program, QualifiedName, Type};
 use crate::errors::CompileError;
-use crate::types::{build_class_registry, ClassRegistry};
+use crate::types::{ClassRegistry, build_class_registry};
 use class::ClassCodeGen;
 use function::FunctionCompiler;
 use miette::Result;
@@ -85,8 +85,12 @@ impl CodeGen {
         self.declare_runtime_functions()?;
 
         // Declare class methods (including trait methods)
-        self.class_codegen
-            .declare_methods(&program.classes, &program.traits, &self.class_registry, &mut self.module)?;
+        self.class_codegen.declare_methods(
+            &program.classes,
+            &program.traits,
+            &self.class_registry,
+            &mut self.module,
+        )?;
 
         // Create vtables for all classes (after methods are declared)
         self.class_codegen
@@ -121,7 +125,9 @@ impl CodeGen {
                     if let Some(trait_def) = program.traits.iter().find(|t| {
                         t.qualified_name
                             .as_ref()
-                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| qn.full_path() == trait_name)
+                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| {
+                                qn.full_path() == trait_name
+                            })
                     }) {
                         for method in &trait_def.methods {
                             // Only compile if class doesn't override
@@ -154,13 +160,15 @@ impl CodeGen {
         let class_key = class
             .qualified_name
             .as_ref()
-            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+            .map_or_else(|| class.name.clone(), QualifiedName::mangle);
         let mangled_name = format!("{}_{}", class_key, method.name);
-        let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
-            CompileError::CodegenError {
-                message: format!("Method {mangled_name} not found"),
-            }
-        })?;
+        let func_id =
+            *self
+                .functions
+                .get(&mangled_name)
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!("Method {mangled_name} not found"),
+                })?;
 
         self.ctx.func.signature = self
             .module
@@ -190,7 +198,7 @@ impl CodeGen {
                 class
                     .qualified_name
                     .as_ref()
-                    .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+                    .map_or_else(|| class.name.clone(), QualifiedName::full_path),
             );
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);
@@ -252,13 +260,15 @@ impl CodeGen {
         let class_key = class
             .qualified_name
             .as_ref()
-            .map_or_else(|| class.name.clone(), |qn| qn.mangle());
+            .map_or_else(|| class.name.clone(), QualifiedName::mangle);
         let mangled_name = format!("{}_{}", class_key, method.name);
-        let func_id = *self.functions.get(&mangled_name).ok_or_else(|| {
-            CompileError::CodegenError {
-                message: format!("Trait method {mangled_name} not found"),
-            }
-        })?;
+        let func_id =
+            *self
+                .functions
+                .get(&mangled_name)
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!("Trait method {mangled_name} not found"),
+                })?;
 
         self.ctx.func.signature = self
             .module
@@ -288,7 +298,7 @@ impl CodeGen {
                 class
                     .qualified_name
                     .as_ref()
-                    .map_or_else(|| class.name.clone(), |qn| qn.full_path()),
+                    .map_or_else(|| class.name.clone(), QualifiedName::full_path),
             );
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);

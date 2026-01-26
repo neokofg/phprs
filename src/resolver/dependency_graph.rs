@@ -79,6 +79,7 @@ impl DependencyGraph {
 
     /// Find all cycles in the graph
     #[must_use]
+    #[allow(dead_code)]
     pub fn find_cycles(&self) -> Vec<Vec<PathBuf>> {
         let mut cycles = Vec::new();
         let mut visited = HashSet::new();
@@ -126,6 +127,7 @@ impl DependencyGraph {
 
     /// Get all dependencies for a file
     #[must_use]
+    #[allow(dead_code)]
     pub fn dependencies(&self, file: &PathBuf) -> Option<&HashSet<PathBuf>> {
         self.edges.get(file)
     }
@@ -197,7 +199,11 @@ mod tests {
         graph.add_dependency(PathBuf::from("a.php"), PathBuf::from("b.php"));
         graph.add_dependency(PathBuf::from("b.php"), PathBuf::from("c.php"));
 
-        assert!(graph.would_create_cycle(&PathBuf::from("a.php"), &PathBuf::from("b.php")).is_none());
+        assert!(
+            graph
+                .would_create_cycle(&PathBuf::from("a.php"), &PathBuf::from("b.php"))
+                .is_none()
+        );
     }
 
     #[test]

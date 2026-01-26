@@ -6,7 +6,7 @@ use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::ObjectModule;
 
-use crate::ast::{ClassDef, Method, TraitDef, Type};
+use crate::ast::{ClassDef, Method, QualifiedName, TraitDef, Type};
 use crate::errors::CompileError;
 use crate::types::ClassRegistry;
 use miette::Result;
@@ -51,7 +51,9 @@ impl ClassCodeGen {
                     if let Some(trait_def) = traits.iter().find(|t| {
                         t.qualified_name
                             .as_ref()
-                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| qn.full_path() == trait_name)
+                            .map_or(t.name == trait_name, |qn: &crate::ast::QualifiedName| {
+                                qn.full_path() == trait_name
+                            })
                     }) {
                         for method in &trait_def.methods {
                             // Only declare if class doesn't override
@@ -121,7 +123,7 @@ impl ClassCodeGen {
         class
             .qualified_name
             .as_ref()
-            .map_or_else(|| class.name.clone(), |qn| qn.mangle())
+            .map_or_else(|| class.name.clone(), QualifiedName::mangle)
     }
 
     /// Declare a single method as a function
@@ -188,8 +190,8 @@ impl ClassCodeGen {
             let class_key = class_info
                 .qualified_name
                 .as_ref()
-                .map_or_else(|| class_info.name.clone(), |qn| qn.mangle());
-            let vtable_name = format!("vtable_{}", class_key);
+                .map_or_else(|| class_info.name.clone(), QualifiedName::mangle);
+            let vtable_name = format!("vtable_{class_key}");
 
             // Vtable is an array of function pointers
             let vtable_size = class_info.vtable_layout.len() * ptr_size;
@@ -214,7 +216,9 @@ impl ClassCodeGen {
             // Store vtable by class key
             self.vtables.insert(class_key, data_id);
             // Also by simple name for backwards compatibility lookup
-            self.vtables.entry(class_info.name.clone()).or_insert(data_id);
+            self.vtables
+                .entry(class_info.name.clone())
+                .or_insert(data_id);
         }
 
         Ok(())

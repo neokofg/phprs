@@ -8,7 +8,7 @@ pub use expr::{ArrayElement, BinaryOp, Expr, ExprKind, UnaryOp};
 pub use namespace::{
     CompilationUnit, NamespaceDecl, QualifiedName, TraitUse, UseDecl, UseItem, UseKind,
 };
-pub use oop::{ClassDef, InterfaceDef, Method, Property, TraitDef, Visibility};
+pub use oop::{ClassDef, Method, Property, TraitDef, Visibility};
 pub use stmt::{Function, Param, Program, Stmt, StmtKind};
 pub use types::Type;
 

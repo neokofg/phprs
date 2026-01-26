@@ -10,13 +10,14 @@ pub enum Symbol {
     Class(QualifiedName),
     Function(QualifiedName),
     Constant(QualifiedName),
+    #[allow(dead_code)]
     Trait(QualifiedName),
 }
 
 impl Symbol {
     /// Get the qualified name of this symbol
     #[must_use]
-    pub fn qualified_name(&self) -> &QualifiedName {
+    pub const fn qualified_name(&self) -> &QualifiedName {
         match self {
             Self::Class(qn) | Self::Function(qn) | Self::Constant(qn) | Self::Trait(qn) => qn,
         }
@@ -76,18 +77,18 @@ impl SymbolTable {
     }
 
     /// Resolve a name to its fully qualified form
-    /// Returns None if not found
+    /// Returns `Some` with resolved name (always returns Some, but Option is kept for API stability)
     #[must_use]
+    #[allow(clippy::unnecessary_wraps)]
     pub fn resolve(&self, name: &str, kind: UseKind) -> Option<QualifiedName> {
         // 1. Check imports
         if let Some(symbol) = self.imports.get(name) {
-            let matches = match (kind, symbol) {
-                (UseKind::Class, Symbol::Class(_)) => true,
-                (UseKind::Function, Symbol::Function(_)) => true,
-                (UseKind::Const, Symbol::Constant(_)) => true,
-                _ => false,
-            };
-            if matches {
+            if matches!(
+                (kind, symbol),
+                (UseKind::Class, Symbol::Class(_))
+                    | (UseKind::Function, Symbol::Function(_))
+                    | (UseKind::Const, Symbol::Constant(_))
+            ) {
                 return Some(symbol.qualified_name().clone());
             }
         }
