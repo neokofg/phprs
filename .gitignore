@@ -1,6 +1,19 @@
-phpc
-!cmd/phpc
-vm_exec
-vm_exec_temp.c
-.idea
-.vscode
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build artifacts
+*.o
+*.ll
+*.exe
+*.pdb
+
+# OS
+.DS_Store
+Thumbs.db

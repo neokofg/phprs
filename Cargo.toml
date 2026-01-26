@@ -1,0 +1,31 @@
+[package]
+name = "phprs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "PHP syntax + Rust semantics compiler with Cranelift backend"
+authors = ["Your Name"]
+license = "MIT"
+
+[dependencies]
+cranelift = "0.116"
+cranelift-module = "0.116"
+cranelift-object = "0.116"
+cranelift-native = "0.116"
+target-lexicon = "0.12"
+clap = { version = "4", features = ["derive"] }
+thiserror = "2"
+miette = { version = "7", features = ["fancy"] }
+logos = "0.14"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+nursery = "warn"
+
+[profile.release]
+opt-level = 3
+lto = true
