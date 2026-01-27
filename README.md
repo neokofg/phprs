@@ -99,4 +99,4 @@ PHP Source -> Lexer -> Parser -> AST -> Type Checker -> Ownership Checker -> Cra
 
 ## License
 
-MIT
+GPL-3.0 License
