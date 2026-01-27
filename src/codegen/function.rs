@@ -34,6 +34,8 @@ pub struct FunctionCompiler<'a, 'b> {
     pub current_class: Option<String>,
     pub class_registry: Option<&'a ClassRegistry>,
     pub class_codegen: Option<&'a ClassCodeGen>,
+    /// Maps PHP function names to their intrinsic runtime function names
+    pub intrinsics: Option<&'a HashMap<String, String>>,
 }
 
 impl<'a, 'b> FunctionCompiler<'a, 'b> {
@@ -54,6 +56,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             current_class: None,
             class_registry: None,
             class_codegen: None,
+            intrinsics: None,
         }
     }
 
@@ -74,6 +77,7 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         var
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn compile_stmt(&mut self, stmt: &Stmt) -> Result<()> {
         if self.terminated {
             return Ok(());
@@ -92,7 +96,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                 if let Some(&var) = self.variables.get(target) {
                     self.builder.def_var(var, val);
                 } else {
-                    let ty = value.ty.as_ref().unwrap_or(&Type::Int);
+                    // Infer type from compiled value if not specified
+                    let ty = value.ty.as_ref().unwrap_or_else(|| {
+                        let val_ty = self.builder.func.dfg.value_type(val);
+                        self.cranelift_to_php_type(val_ty)
+                    });
                     let var = self.declare_variable(target, ty);
                     self.builder.def_var(var, val);
                 }
@@ -144,11 +152,11 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             StmtKind::Echo(exprs) => {
                 for expr in exprs {
                     let val = self.compile_expr(expr)?;
-                    // Infer type from expression kind if not set
-                    let ty = expr
-                        .ty
-                        .as_ref()
-                        .unwrap_or_else(|| self.infer_type(&expr.kind));
+                    // Infer type from compiled value for accurate type detection
+                    let ty = expr.ty.as_ref().unwrap_or_else(|| {
+                        let val_ty = self.builder.func.dfg.value_type(val);
+                        self.cranelift_to_php_type(val_ty)
+                    });
                     self.emit_print(val, ty)?;
                 }
             }
@@ -473,12 +481,18 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     fn compile_call(&mut self, name: &str, args: &[Expr]) -> Result<Value> {
-        let func_id = self
-            .functions
-            .get(name)
-            .ok_or_else(|| CompileError::CodegenError {
-                message: format!("Unknown function: {name}"),
-            })?;
+        // Resolve intrinsic name if this is an intrinsic function
+        let resolved_name = self
+            .intrinsics
+            .and_then(|map| map.get(name))
+            .map_or(name, String::as_str);
+
+        let func_id =
+            self.functions
+                .get(resolved_name)
+                .ok_or_else(|| CompileError::CodegenError {
+                    message: format!("Unknown function: {name}"),
+                })?;
 
         let func_ref = self
             .module
@@ -1094,6 +1108,40 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
     }
 
     pub fn emit_print(&mut self, val: Value, ty: &Type) -> Result<()> {
+        let ptr_ty = self.module.target_config().pointer_type();
+
+        // For floats, use _gcvt to convert to string, then print as string
+        // This avoids Windows x64 variadic ABI issues with float arguments
+        if matches!(ty, Type::Float) {
+            // Allocate buffer on stack for float string (32 bytes is enough for any double)
+            let buffer_slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                32,
+                0,
+            ));
+            let buffer_ptr = self.builder.ins().stack_addr(ptr_ty, buffer_slot, 0);
+
+            // Call _gcvt(value, precision, buffer)
+            let gcvt_id =
+                self.functions
+                    .get("_gcvt")
+                    .ok_or_else(|| CompileError::CodegenError {
+                        message: "_gcvt not found".to_string(),
+                    })?;
+
+            let gcvt_ref = self
+                .module
+                .declare_func_in_func(*gcvt_id, self.builder.func);
+
+            let precision = self.builder.ins().iconst(types::I32, 6);
+            self.builder
+                .ins()
+                .call(gcvt_ref, &[val, precision, buffer_ptr]);
+
+            // Now print the string buffer using printf with %s
+            return self.emit_print(buffer_ptr, &Type::String);
+        }
+
         let printf_id = self
             .functions
             .get("printf")
@@ -1104,11 +1152,9 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         let printf_ref = self
             .module
             .declare_func_in_func(*printf_id, self.builder.func);
-        let ptr_ty = self.module.target_config().pointer_type();
 
         let fmt_str = match ty {
             Type::Int | Type::Unknown => "%lld",
-            Type::Float => "%f",
             Type::Bool => "%d",
             Type::String => "%s",
             _ => "%s",
@@ -1178,22 +1224,21 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
         }
     }
 
-    /// Infer the type of an expression from its kind (fallback when ty is None)
-    fn infer_type<'t>(&self, kind: &'t ExprKind) -> &'t Type {
-        // Use a static reference for inferred types
+    /// Convert Cranelift type to PHP type (for type inference from values)
+    fn cranelift_to_php_type(&self, cl_ty: types::Type) -> &'static Type {
         static INT_TYPE: Type = Type::Int;
         static FLOAT_TYPE: Type = Type::Float;
         static BOOL_TYPE: Type = Type::Bool;
         static STRING_TYPE: Type = Type::String;
-        static UNKNOWN_TYPE: Type = Type::Unknown;
 
-        match kind {
-            ExprKind::IntLit(_) => &INT_TYPE,
-            ExprKind::FloatLit(_) => &FLOAT_TYPE,
-            ExprKind::BoolLit(_) => &BOOL_TYPE,
-            ExprKind::StringLit(_) => &STRING_TYPE,
-            ExprKind::Null => &UNKNOWN_TYPE,
-            _ => &INT_TYPE, // Default to int for other expressions
+        if cl_ty == types::F64 {
+            &FLOAT_TYPE
+        } else if cl_ty == types::I8 {
+            &BOOL_TYPE
+        } else if cl_ty == self.module.target_config().pointer_type() {
+            &STRING_TYPE // Pointers are typically strings
+        } else {
+            &INT_TYPE // Default to int (I64, I32, etc.)
         }
     }
 

@@ -809,7 +809,10 @@ impl TypeChecker {
 
         // Add captured variables to closure scope
         for capture in captures {
-            let outer_type = self.lookup_var(&capture.name).cloned().unwrap_or(Type::Unknown);
+            let outer_type = self
+                .lookup_var(&capture.name)
+                .cloned()
+                .unwrap_or(Type::Unknown);
             // Don't redefine if already in scope from outer lookup
             if self.lookup_var(&capture.name).is_none() {
                 self.define_var(&capture.name, outer_type);

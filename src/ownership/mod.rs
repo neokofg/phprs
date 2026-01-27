@@ -273,7 +273,11 @@ impl OwnershipChecker {
                 for catch in catches {
                     self.push_scope();
                     // Define exception variable
-                    self.define_var(&catch.variable, Type::Class("Exception".to_string()), catch.span);
+                    self.define_var(
+                        &catch.variable,
+                        Type::Class("Exception".to_string()),
+                        catch.span,
+                    );
                     for s in &catch.body {
                         self.check_stmt(s)?;
                     }
@@ -458,9 +462,7 @@ impl OwnershipChecker {
                 self.check_expr(index, false)?;
             }
 
-            ExprKind::Closure {
-                body, captures, ..
-            } => {
+            ExprKind::Closure { body, captures, .. } => {
                 // Check captured variables
                 for capture in captures {
                     self.check_var_use(&capture.name, capture.span)?;

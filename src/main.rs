@@ -9,6 +9,7 @@ mod lexer;
 mod ownership;
 mod parser;
 mod resolver;
+mod stdlib;
 mod types;
 
 #[derive(Parser, Debug)]
@@ -37,6 +38,10 @@ enum Commands {
         /// Enable debug output
         #[arg(long)]
         debug: bool,
+
+        /// Disable standard library (intrinsics)
+        #[arg(long)]
+        no_stdlib: bool,
     },
 }
 
@@ -49,8 +54,9 @@ fn main() -> Result<()> {
             output,
             emit_llvm,
             debug,
+            no_stdlib,
         } => {
-            compile_file(&input, output.as_deref(), emit_llvm, debug)?;
+            compile_file(&input, output.as_deref(), emit_llvm, debug, !no_stdlib)?;
         }
     }
 
@@ -62,6 +68,7 @@ fn compile_file(
     output: Option<&std::path::Path>,
     emit_llvm: bool,
     debug: bool,
+    use_stdlib: bool,
 ) -> Result<()> {
     use std::fs;
 
@@ -85,7 +92,7 @@ fn compile_file(
     }
 
     // 3. Module resolution (if there are imports)
-    let ast = if unit.uses.is_empty() && unit.namespace.is_none() {
+    let mut ast = if unit.uses.is_empty() && unit.namespace.is_none() {
         // Simple case: no namespace, no imports - just convert to Program
         ast::Program::from_unit(unit)
     } else {
@@ -97,6 +104,21 @@ fn compile_file(
         let mut resolver = resolver::ModuleResolver::new(vec![input_dir]);
         resolver.resolve(input.to_path_buf(), unit)?
     };
+
+    // 3.5. Load stdlib intrinsics
+    if use_stdlib {
+        let stdlib_functions = stdlib::get_stdlib_functions();
+        if debug {
+            eprintln!(
+                "=== Stdlib Functions: {} loaded ===",
+                stdlib_functions.len()
+            );
+        }
+        // Prepend stdlib functions (so user can override)
+        let mut all_functions = stdlib_functions;
+        all_functions.extend(ast.functions);
+        ast.functions = all_functions;
+    }
 
     if debug {
         eprintln!("=== AST ===\n{ast:#?}");

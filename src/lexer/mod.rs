@@ -99,7 +99,10 @@ function main() {
         assert!(
             tokens.iter().any(|t| t.kind == TokenKind::HashBracket),
             "Expected HashBracket token, got: {:?}",
-            tokens.iter().map(|t| (&t.kind, &t.text)).collect::<Vec<_>>()
+            tokens
+                .iter()
+                .map(|t| (&t.kind, &t.text))
+                .collect::<Vec<_>>()
         );
     }
 }

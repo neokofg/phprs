@@ -188,7 +188,14 @@ impl Parser {
         }
 
         if self.check(TokenKind::Fn) {
-            self.parse_method(start, visibility, is_static, is_abstract, is_final, attributes)
+            self.parse_method(
+                start,
+                visibility,
+                is_static,
+                is_abstract,
+                is_final,
+                attributes,
+            )
         } else if self.check(TokenKind::Variable) {
             self.parse_property(start, visibility, is_static, attributes)
         } else {

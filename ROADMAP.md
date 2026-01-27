@@ -423,9 +423,9 @@ serve("0.0.0.0", 8080);
 
 ---
 
-## Фаза 5: Расширенные возможности (4-6 недель)
+## Фаза 5: Расширенные возможности (4-6 недель) ✅ ЗАВЕРШЕНА
 
-### 5.1 Атрибуты
+### 5.1 Атрибуты ✅
 
 ```php
 <?php
@@ -435,6 +435,11 @@ serve("0.0.0.0", 8080);
 fn list_users(): array {
     return User::all();
 }
+
+// Intrinsic атрибуты для stdlib
+#[Inline]
+#[Intrinsic("rt_strlen")]
+function strlen($s: string): int;
 ```
 
 ```rust
@@ -452,29 +457,77 @@ pub enum AttributeArg {
 }
 ```
 
-### 5.2 Замыкания (Closures)
+### 5.1.1 Intrinsics System ✅ NEW
+
+**Цель:** PHP stdlib с runtime производительностью
 
 ```php
 <?php
-$users = array_map(fn($u) => $u->name, $users);
+// stdlib/string.php
 
+#[Inline]              // Inline на call site
+#[Pure]                // Нет side effects
+#[CompileTime]         // Можно вычислить при компиляции
+#[Intrinsic("rt_strlen")]  // Маппинг на runtime функцию
+function strlen($s: string): int;
+```
+
+Компилятор преобразует вызовы intrinsic функций напрямую в runtime вызовы:
+```
+strlen("hello")  →  rt_strlen("hello")  // Zero overhead
+```
+
+**Созданные stdlib модули:**
+- `stdlib/string.php` — strlen, substr, strpos, str_replace, etc.
+- `stdlib/array.php` — count, array_push, array_map, array_filter, etc.
+- `stdlib/math.php` — abs, ceil, floor, sin, cos, sqrt, etc.
+- `stdlib/type.php` — is_null, is_int, gettype, etc.
+- `stdlib/json.php` — json_encode, json_decode
+- `stdlib/file.php` — file_get_contents, fopen, fread, etc.
+- `stdlib/output.php` — echo, print, var_dump
+- `stdlib/datetime.php` — time, date, strtotime
+- `stdlib/hash.php` — hash, md5, sha1, password_hash
+
+### 5.2 Замыкания (Closures) ✅
+
+```php
+<?php
+// Arrow syntax
+$users = array_map(fn($u) => $u->name, $users);
 $handler = fn($req) => Response::json(["ok" => true]);
+
+// Full syntax with captures
+$multiplier = 2;
+$double = function($x) use ($multiplier) {
+    return $x * $multiplier;
+};
+
+// Reference captures
+$counter = 0;
+$increment = function() use (&$counter) {
+    $counter++;
+};
 ```
 
 ```rust
 // src/ast/expr.rs
 
 pub enum ExprKind {
-    // ...
     Closure {
         params: Vec<Param>,
-        body: Box<Expr>,        // короткий синтаксис fn() => expr
-        captures: Vec<String>,  // захваченные переменные
+        return_type: Option<Type>,
+        body: ClosureBody,      // Arrow(Expr) или Block(Vec<Stmt>)
+        captures: Vec<Capture>, // name, by_ref, span
+        is_static: bool,
+    },
+    ClosureCall {
+        closure: Box<Expr>,
+        args: Vec<Expr>,
     },
 }
 ```
 
-### 5.3 Исключения
+### 5.3 Исключения ✅
 
 ```php
 <?php
@@ -482,19 +535,52 @@ try {
     $user = User::findOrFail($id);
 } catch (NotFoundException $e) {
     return Response::notFound();
+} catch (DatabaseException | ConnectionException $e) {
+    // Multi-catch
+    log_error($e->getMessage());
 } finally {
     $db->close();
 }
+
+throw new RuntimeException("Something went wrong");
 ```
 
-### 5.4 File I/O
+```rust
+// src/ast/stmt.rs
+
+pub enum StmtKind {
+    TryCatch {
+        try_block: Vec<Stmt>,
+        catches: Vec<CatchClause>,
+        finally_block: Option<Vec<Stmt>>,
+    },
+    Throw(Expr),
+}
+
+pub struct CatchClause {
+    pub exception_types: Vec<String>,  // Несколько типов через |
+    pub variable: String,
+    pub body: Vec<Stmt>,
+}
+```
+
+### 5.4 File I/O ✅
+
+**Runtime модуль:** `runtime/src/fs/`
 
 ```rust
-#[no_mangle] pub extern "C" fn rt_file_read(path: &SmartString) -> SmartString;
-#[no_mangle] pub extern "C" fn rt_file_write(path: &SmartString, data: &SmartString) -> i64;
-#[no_mangle] pub extern "C" fn rt_file_exists(path: &SmartString) -> bool;
-#[no_mangle] pub extern "C" fn rt_file_delete(path: &SmartString) -> bool;
-#[no_mangle] pub extern "C" fn rt_scandir(path: &SmartString) -> PhpArray;
+// C ABI функции
+#[no_mangle] pub extern "C" fn phprs_fs_open(path: *const c_char, mode: u32) -> FsResult<*mut FileHandle>;
+#[no_mangle] pub extern "C" fn phprs_fs_read(handle: *mut FileHandle, buf: *mut u8, len: usize) -> FsResult<usize>;
+#[no_mangle] pub extern "C" fn phprs_fs_write(handle: *mut FileHandle, buf: *const u8, len: usize) -> FsResult<usize>;
+#[no_mangle] pub extern "C" fn phprs_fs_seek(handle: *mut FileHandle, offset: i64, origin: SeekOrigin) -> FsResult<u64>;
+#[no_mangle] pub extern "C" fn phprs_fs_close(handle: *mut FileHandle) -> FsError;
+#[no_mangle] pub extern "C" fn phprs_fs_exists(path: *const c_char) -> bool;
+#[no_mangle] pub extern "C" fn phprs_fs_is_file(path: *const c_char) -> bool;
+#[no_mangle] pub extern "C" fn phprs_fs_is_dir(path: *const c_char) -> bool;
+#[no_mangle] pub extern "C" fn phprs_fs_read_all(path: *const c_char) -> FsResult<FileBuffer>;
+#[no_mangle] pub extern "C" fn phprs_fs_write_all(path: *const c_char, data: *const u8, len: usize) -> FsError;
+// ... и многое другое
 ```
 
 ---

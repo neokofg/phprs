@@ -5,6 +5,7 @@ pub mod lexer;
 pub mod ownership;
 pub mod parser;
 pub mod resolver;
+pub mod stdlib;
 pub mod types;
 
 pub use errors::CompileError;

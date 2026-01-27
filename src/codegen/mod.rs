@@ -44,6 +44,8 @@ struct CodeGen {
     data_id_counter: u32,
     class_codegen: ClassCodeGen,
     class_registry: ClassRegistry,
+    /// Maps PHP function names to their intrinsic runtime function names
+    intrinsics: HashMap<String, String>,
 }
 
 impl CodeGen {
@@ -73,6 +75,7 @@ impl CodeGen {
             data_id_counter: 0,
             class_codegen: ClassCodeGen::new(),
             class_registry: ClassRegistry::new(),
+            intrinsics: HashMap::new(),
         })
     }
 
@@ -202,6 +205,7 @@ impl CodeGen {
             );
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);
+            compiler.intrinsics = Some(&self.intrinsics);
 
             let mut param_idx = 0;
 
@@ -302,6 +306,7 @@ impl CodeGen {
             );
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);
+            compiler.intrinsics = Some(&self.intrinsics);
 
             let mut param_idx = 0;
 
@@ -386,6 +391,15 @@ impl CodeGen {
         // sprintf: (ptr, ptr, ...) -> i32
         self.declare_runtime_func("sprintf", &[ptr_type, ptr_type], Some(types::I32))?;
 
+        // gcvt: (f64, i32, ptr) -> ptr - converts double to string (non-variadic)
+        self.declare_runtime_func("_gcvt", &[types::F64, types::I32, ptr_type], Some(ptr_type))?;
+
+        // puts: (ptr) -> i32 - prints string with newline
+        self.declare_runtime_func("puts", &[ptr_type], Some(types::I32))?;
+
+        // fputs: (ptr, ptr) -> i32 - prints string without newline
+        self.declare_runtime_func("fputs", &[ptr_type, ptr_type], Some(types::I32))?;
+
         Ok(())
     }
 
@@ -415,6 +429,42 @@ impl CodeGen {
     }
 
     fn declare_function(&mut self, func: &Function) -> Result<()> {
+        // Check for #[Intrinsic("rt_func_name")] attribute
+        if let Some(intrinsic_name) = func.attributes.get_intrinsic() {
+            // Store the mapping for later use during calls
+            self.intrinsics
+                .insert(func.name.clone(), intrinsic_name.to_string());
+
+            // Declare the runtime function if not already declared
+            if !self.functions.contains_key(intrinsic_name) {
+                let mut sig = self.module.make_signature();
+                for param in &func.params {
+                    let ty = self.cranelift_type(&param.ty);
+                    sig.params.push(AbiParam::new(ty));
+                }
+                if func.return_type != Type::Void {
+                    let ret_ty = self.cranelift_type(&func.return_type);
+                    sig.returns.push(AbiParam::new(ret_ty));
+                }
+
+                let func_id = self
+                    .module
+                    .declare_function(intrinsic_name, Linkage::Import, &sig)
+                    .map_err(|e| CompileError::CodegenError {
+                        message: format!("Failed to declare intrinsic {intrinsic_name}: {e}"),
+                    })?;
+
+                self.functions.insert(intrinsic_name.to_string(), func_id);
+            }
+
+            // Also register the PHP function name pointing to the same FuncId
+            if let Some(&func_id) = self.functions.get(intrinsic_name) {
+                self.functions.insert(func.name.clone(), func_id);
+            }
+
+            return Ok(());
+        }
+
         let mut sig = self.module.make_signature();
 
         for param in &func.params {
@@ -448,6 +498,11 @@ impl CodeGen {
     }
 
     fn compile_function(&mut self, func: &Function) -> Result<()> {
+        // Skip compilation for intrinsic functions - they forward to runtime
+        if func.attributes.get_intrinsic().is_some() {
+            return Ok(());
+        }
+
         let func_id = *self.functions.get(&func.name).unwrap();
 
         self.ctx.func.signature = self
@@ -476,6 +531,7 @@ impl CodeGen {
             // Set class context for OOP support
             compiler.class_registry = Some(&self.class_registry);
             compiler.class_codegen = Some(&self.class_codegen);
+            compiler.intrinsics = Some(&self.intrinsics);
 
             // Initialize vtables at the start of main()
             if func.name == "main" {

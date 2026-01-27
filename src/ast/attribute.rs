@@ -48,27 +48,27 @@ impl Attribute {
     /// Create attribute with no arguments
     #[must_use]
     pub const fn simple(name: String, span: Span) -> Self {
-        Self { name, args: Vec::new(), span }
+        Self {
+            name,
+            args: Vec::new(),
+            span,
+        }
     }
 
     /// Get positional arguments only
     pub fn positional_args(&self) -> impl Iterator<Item = &Expr> {
-        self.args.iter().filter_map(|arg| {
-            match arg {
-                AttributeArg::Positional(expr) => Some(expr),
-                AttributeArg::Named(..) => None,
-            }
+        self.args.iter().filter_map(|arg| match arg {
+            AttributeArg::Positional(expr) => Some(expr),
+            AttributeArg::Named(..) => None,
         })
     }
 
     /// Get named argument by name
     #[must_use]
     pub fn get_named(&self, name: &str) -> Option<&Expr> {
-        self.args.iter().find_map(|arg| {
-            match arg {
-                AttributeArg::Named(n, expr) if n == name => Some(expr),
-                _ => None,
-            }
+        self.args.iter().find_map(|arg| match arg {
+            AttributeArg::Named(n, expr) if n == name => Some(expr),
+            _ => None,
         })
     }
 
@@ -112,6 +112,39 @@ impl Attributes {
     #[must_use]
     pub fn has(&self, name: &str) -> bool {
         self.get(name).is_some()
+    }
+
+    /// Get intrinsic runtime function name if `#[Intrinsic("rt_func")]` is present
+    #[must_use]
+    pub fn get_intrinsic(&self) -> Option<&str> {
+        let attr = self.get("Intrinsic")?;
+        // Get first positional argument as string
+        let expr = match attr.args.first()? {
+            AttributeArg::Positional(expr) | AttributeArg::Named(_, expr) => expr,
+        };
+        if let super::expr::ExprKind::StringLit(s) = &expr.kind {
+            Some(s.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Check if function is marked with `#[Inline]`
+    #[must_use]
+    pub fn is_inline(&self) -> bool {
+        self.has("Inline")
+    }
+
+    /// Check if function is marked with `#[Pure]` (no side effects)
+    #[must_use]
+    pub fn is_pure(&self) -> bool {
+        self.has("Pure")
+    }
+
+    /// Check if function can be evaluated at compile time `#[CompileTime]`
+    #[must_use]
+    pub fn is_compile_time(&self) -> bool {
+        self.has("CompileTime")
     }
 
     /// Get all attributes with given name

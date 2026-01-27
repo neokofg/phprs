@@ -139,10 +139,7 @@ pub enum ExprKind {
     },
 
     /// Closure call: $closure($args)
-    ClosureCall {
-        closure: Box<Expr>,
-        args: Vec<Expr>,
-    },
+    ClosureCall { closure: Box<Expr>, args: Vec<Expr> },
 }
 
 /// Array element (for array literals)
