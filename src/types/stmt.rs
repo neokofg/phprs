@@ -2,7 +2,7 @@
 
 #![allow(clippy::ref_option)]
 
-use crate::ast::{Stmt, StmtKind, Type};
+use crate::ast::{CatchClause, Stmt, StmtKind, Type};
 use crate::errors::CompileError;
 use miette::Result;
 
@@ -55,6 +55,15 @@ impl TypeChecker {
                 }
                 self.pop_scope();
                 StmtKind::Block(typed)
+            }
+            StmtKind::TryCatch {
+                try_block,
+                catches,
+                finally_block,
+            } => self.check_try_catch(try_block, catches, finally_block, return_type)?,
+            StmtKind::Throw(expr) => {
+                let typed = self.check_expr(expr)?;
+                StmtKind::Throw(typed)
             }
         };
 
@@ -263,6 +272,64 @@ impl TypeChecker {
             condition: cond_typed,
             update: update_typed,
             body: body_typed,
+        })
+    }
+
+    fn check_try_catch(
+        &mut self,
+        try_block: &[Stmt],
+        catches: &[CatchClause],
+        finally_block: &Option<Vec<Stmt>>,
+        return_type: &Type,
+    ) -> Result<StmtKind> {
+        // Type check try block
+        self.push_scope();
+        let mut try_typed = Vec::new();
+        for s in try_block {
+            try_typed.push(self.check_stmt(s, return_type)?);
+        }
+        self.pop_scope();
+
+        // Type check catch clauses
+        let mut catches_typed = Vec::new();
+        for catch in catches {
+            self.push_scope();
+
+            // Add exception variable to scope with generic Exception type
+            // TODO: Use actual exception type when we have exception class hierarchy
+            self.define_var(&catch.variable, Type::Class("Exception".to_string()));
+
+            let mut body_typed = Vec::new();
+            for s in &catch.body {
+                body_typed.push(self.check_stmt(s, return_type)?);
+            }
+            self.pop_scope();
+
+            catches_typed.push(CatchClause {
+                exception_types: catch.exception_types.clone(),
+                variable: catch.variable.clone(),
+                body: body_typed,
+                span: catch.span,
+            });
+        }
+
+        // Type check finally block
+        let finally_typed = if let Some(finally_stmts) = finally_block {
+            self.push_scope();
+            let mut typed = Vec::new();
+            for s in finally_stmts {
+                typed.push(self.check_stmt(s, return_type)?);
+            }
+            self.pop_scope();
+            Some(typed)
+        } else {
+            None
+        };
+
+        Ok(StmtKind::TryCatch {
+            try_block: try_typed,
+            catches: catches_typed,
+            finally_block: finally_typed,
         })
     }
 }

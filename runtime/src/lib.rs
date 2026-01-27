@@ -1,12 +1,13 @@
 //! PHPRS Runtime Library
 //!
 //! High-performance runtime for the PHPRS compiler.
-//! Provides optimized implementations for strings, arrays, JSON, and HTTP.
+//! Provides optimized implementations for strings, arrays, JSON, HTTP, and filesystem.
 
 #![allow(clippy::missing_safety_doc)]
 
 pub mod arena;
 pub mod array;
+pub mod fs;
 pub mod http;
 pub mod intern;
 pub mod json;
@@ -22,4 +23,5 @@ pub use http::{
 };
 pub use intern::{InternId, StringInterner, headers, intern, intern_header, get_interned, header_name};
 pub use json::{decode as json_decode, encode as json_encode, JsonError};
+pub use fs::{FsError, FileHandle, OpenMode, SeekOrigin, FsResult};
 pub use string::SmartString;

@@ -339,6 +339,7 @@ impl TypeChecker {
             trait_uses: class.trait_uses.clone(),
             is_abstract: class.is_abstract,
             is_final: class.is_final,
+            attributes: class.attributes.clone(),
             span: class.span,
         })
     }
@@ -408,6 +409,7 @@ impl TypeChecker {
                 is_abstract: method.is_abstract,
                 is_final: method.is_final,
                 body: None,
+                attributes: method.attributes.clone(),
                 span: method.span,
             });
         }
@@ -451,6 +453,7 @@ impl TypeChecker {
             is_abstract: method.is_abstract,
             is_final: method.is_final,
             body: typed_body,
+            attributes: method.attributes.clone(),
             span: method.span,
         })
     }
@@ -476,6 +479,7 @@ impl TypeChecker {
             params: func.params.clone(),
             return_type: func.return_type.clone(),
             body: typed_body,
+            attributes: func.attributes.clone(),
             span: func.span,
         })
     }

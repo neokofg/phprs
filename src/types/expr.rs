@@ -2,7 +2,9 @@
 
 #![allow(clippy::too_many_lines, clippy::option_if_let_else)]
 
-use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, Span, Type, UnaryOp};
+use crate::ast::{
+    ArrayElement, BinaryOp, Capture, ClosureBody, Expr, ExprKind, Param, Span, Type, UnaryOp,
+};
 use crate::errors::CompileError;
 use miette::Result;
 
@@ -138,6 +140,17 @@ impl TypeChecker {
             }
             ExprKind::ArrayLit(elements) => self.check_array_lit(elements)?,
             ExprKind::ArrayAccess { array, index } => self.check_array_access(array, index)?,
+
+            // Closure expressions - type check body but codegen handles the rest
+            ExprKind::Closure {
+                params,
+                return_type,
+                body,
+                captures,
+                is_static,
+            } => self.check_closure(params, return_type, body, captures, *is_static)?,
+
+            ExprKind::ClosureCall { closure, args } => self.check_closure_call(closure, args)?,
         };
 
         Ok(Expr {
@@ -765,5 +778,104 @@ impl TypeChecker {
 
             BinaryOp::Concat => Ok(Type::String),
         }
+    }
+
+    #[allow(clippy::ref_option)]
+    fn check_closure(
+        &mut self,
+        params: &[Param],
+        return_type: &Option<Type>,
+        body: &ClosureBody,
+        captures: &[Capture],
+        is_static: bool,
+    ) -> Result<(ExprKind, Type)> {
+        // Look up captured variables before entering closure scope
+        let mut typed_captures = Vec::new();
+        for capture in captures {
+            typed_captures.push(Capture {
+                name: capture.name.clone(),
+                by_ref: capture.by_ref,
+                span: capture.span,
+            });
+        }
+
+        // Enter new scope for closure body
+        self.push_scope();
+
+        // Add parameters to scope
+        for param in params {
+            self.define_var(&param.name, param.ty.clone());
+        }
+
+        // Add captured variables to closure scope
+        for capture in captures {
+            let outer_type = self.lookup_var(&capture.name).cloned().unwrap_or(Type::Unknown);
+            // Don't redefine if already in scope from outer lookup
+            if self.lookup_var(&capture.name).is_none() {
+                self.define_var(&capture.name, outer_type);
+            }
+        }
+
+        // Determine return type for block checking
+        let ret_type = return_type.clone().unwrap_or(Type::Unknown);
+
+        // Type check body
+        let typed_body = match body {
+            ClosureBody::Arrow(expr) => {
+                let typed_expr = self.check_expr(expr)?;
+                ClosureBody::Arrow(Box::new(typed_expr))
+            }
+            ClosureBody::Block(stmts) => {
+                let mut typed_stmts = Vec::new();
+                for stmt in stmts {
+                    typed_stmts.push(self.check_stmt(stmt, &ret_type)?);
+                }
+                ClosureBody::Block(typed_stmts)
+            }
+        };
+
+        // Pop closure scope
+        self.pop_scope();
+
+        // Build closure type: Closure(param_types, return_type)
+        let param_types: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
+
+        Ok((
+            ExprKind::Closure {
+                params: params.to_vec(),
+                return_type: return_type.clone(),
+                body: typed_body,
+                captures: typed_captures,
+                is_static,
+            },
+            Type::Closure(param_types, Box::new(ret_type)),
+        ))
+    }
+
+    fn check_closure_call(&mut self, closure: &Expr, args: &[Expr]) -> Result<(ExprKind, Type)> {
+        let closure_typed = self.check_expr(closure)?;
+        let closure_ty = closure_typed.ty.clone().unwrap_or(Type::Unknown);
+
+        // Type check arguments
+        let mut typed_args = Vec::new();
+        for arg in args {
+            typed_args.push(self.check_expr(arg)?);
+        }
+
+        // Get return type from closure type if possible
+        let return_ty = if let Type::Closure(_params, ret) = &closure_ty {
+            (**ret).clone()
+        } else {
+            // Unknown closure type - return Unknown
+            Type::Unknown
+        };
+
+        Ok((
+            ExprKind::ClosureCall {
+                closure: Box::new(closure_typed),
+                args: typed_args,
+            },
+            return_ty,
+        ))
     }
 }

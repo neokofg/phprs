@@ -531,6 +531,7 @@ impl CodeGen {
             Type::Class(_) | Type::Interface(_) => self.module.target_config().pointer_type(),
             Type::Nullable(inner) => self.cranelift_type(inner),
             Type::Array(_) => self.module.target_config().pointer_type(),
+            Type::Closure(_, _) => self.module.target_config().pointer_type(), // Function pointer
             Type::SelfType | Type::StaticType => self.module.target_config().pointer_type(),
             Type::Unknown => types::I64,
         }

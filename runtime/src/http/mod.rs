@@ -64,21 +64,27 @@ pub extern "C" fn rt_http_server_create(host: &SmartString, port: u16) -> *mut H
 }
 
 /// Destroy HTTP server
+///
+/// # Safety
+/// The pointer must have been allocated by `rt_http_server_create` and must not be used after this call.
 #[no_mangle]
-pub extern "C" fn rt_http_server_destroy(server: *mut HttpServer) {
+pub unsafe extern "C" fn rt_http_server_destroy(server: *mut HttpServer) {
     if !server.is_null() {
-        unsafe { drop(Box::from_raw(server)); }
+        drop(Box::from_raw(server));
     }
 }
 
 /// Accept connection (blocking)
+///
+/// # Safety
+/// The server pointer must be valid.
 #[no_mangle]
-pub extern "C" fn rt_http_accept(server: *mut HttpServer) -> *mut Connection {
+pub unsafe extern "C" fn rt_http_accept(server: *mut HttpServer) -> *mut Connection {
     if server.is_null() {
         return std::ptr::null_mut();
     }
 
-    let server = unsafe { &*server };
+    let server = &*server;
     match server.accept() {
         Ok(conn) => Box::into_raw(Box::new(conn)),
         Err(_) => std::ptr::null_mut(),
@@ -86,10 +92,13 @@ pub extern "C" fn rt_http_accept(server: *mut HttpServer) -> *mut Connection {
 }
 
 /// Destroy connection
+///
+/// # Safety
+/// The pointer must have been allocated by `rt_http_accept` and must not be used after this call.
 #[no_mangle]
-pub extern "C" fn rt_http_connection_destroy(conn: *mut Connection) {
+pub unsafe extern "C" fn rt_http_connection_destroy(conn: *mut Connection) {
     if !conn.is_null() {
-        unsafe { drop(Box::from_raw(conn)); }
+        drop(Box::from_raw(conn));
     }
 }
 
@@ -100,8 +109,11 @@ pub extern "C" fn rt_http_response_new(status: u16) -> *mut Response {
 }
 
 /// Set response header
+///
+/// # Safety
+/// The response pointer must be valid.
 #[no_mangle]
-pub extern "C" fn rt_http_response_header(
+pub unsafe extern "C" fn rt_http_response_header(
     resp: *mut Response,
     name: &SmartString,
     value: &SmartString,
@@ -109,7 +121,7 @@ pub extern "C" fn rt_http_response_header(
     if resp.is_null() {
         return;
     }
-    let resp = unsafe { &mut *resp };
+    let resp = &mut *resp;
     // We need to rebuild response with new header
     // This is a bit awkward due to builder pattern
     let name_clone = name.clone();
@@ -119,24 +131,30 @@ pub extern "C" fn rt_http_response_header(
 
 
 /// Set response body
+///
+/// # Safety
+/// The response pointer must be valid.
 #[no_mangle]
-pub extern "C" fn rt_http_response_body(resp: *mut Response, body: &SmartString) {
+pub unsafe extern "C" fn rt_http_response_body(resp: *mut Response, body: &SmartString) {
     if resp.is_null() {
         return;
     }
-    let resp = unsafe { &mut *resp };
+    let resp = &mut *resp;
     resp.body = body.as_bytes().to_vec();
 }
 
 /// Send response and destroy it
+///
+/// # Safety
+/// Both pointers must be valid. The response pointer is consumed.
 #[no_mangle]
-pub extern "C" fn rt_http_respond(conn: *mut Connection, resp: *mut Response) -> bool {
+pub unsafe extern "C" fn rt_http_respond(conn: *mut Connection, resp: *mut Response) -> bool {
     if conn.is_null() || resp.is_null() {
         return false;
     }
 
-    let conn = unsafe { &mut *conn };
-    let resp = unsafe { Box::from_raw(resp) };
+    let conn = &mut *conn;
+    let resp = Box::from_raw(resp);
 
     conn.write_response(&resp).is_ok()
 }

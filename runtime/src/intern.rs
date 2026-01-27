@@ -7,6 +7,8 @@
 //! 1. Static interning - compile-time known strings (HTTP headers)
 //! 2. Dynamic interning - runtime string deduplication
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::collections::HashMap;
 use std::sync::RwLock;
 

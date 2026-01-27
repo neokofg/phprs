@@ -321,6 +321,7 @@ impl ClassCodeGen {
             Type::Class(_) | Type::Interface(_) => ptr_type,
             Type::Nullable(inner) => Self::cranelift_type(inner, ptr_type),
             Type::Array(_) => ptr_type,
+            Type::Closure(_, _) => ptr_type, // Function pointer
             Type::SelfType | Type::StaticType => ptr_type,
             Type::Unknown => types::I64,
         }

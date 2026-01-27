@@ -24,6 +24,8 @@ pub enum Type {
     Nullable(Box<Self>),
     /// Array type
     Array(Box<Self>),
+    /// Closure type: `Closure(param_types, return_type)`
+    Closure(Vec<Self>, Box<Self>),
     /// Self type (inside class)
     SelfType,
     /// Static type (late static binding)
@@ -85,6 +87,16 @@ impl std::fmt::Display for Type {
             Self::Class(name) | Self::Interface(name) => write!(f, "{name}"),
             Self::Nullable(inner) => write!(f, "?{inner}"),
             Self::Array(inner) => write!(f, "array<{inner}>"),
+            Self::Closure(params, ret) => {
+                write!(f, "Closure(")?;
+                for (i, p) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{p}")?;
+                }
+                write!(f, "): {ret}")
+            }
             Self::SelfType => write!(f, "self"),
             Self::StaticType => write!(f, "static"),
             Self::Unknown => write!(f, "unknown"),

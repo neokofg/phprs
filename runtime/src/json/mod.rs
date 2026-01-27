@@ -20,7 +20,7 @@ pub use decode::{decode, decode_value, JsonDecoder};
 pub use encode::{encode, encode_to, JsonEncoder};
 pub use error::{JsonError, JsonResult};
 
-use crate::array::{PhpArray, PhpValue};
+use crate::array::PhpValue;
 use crate::SmartString;
 
 // =============================================================================

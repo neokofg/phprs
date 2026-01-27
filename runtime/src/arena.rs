@@ -162,7 +162,7 @@ impl Arena {
         let layout = Layout::array::<T>(len).expect("Invalid array layout");
         let ptr = self.alloc_layout(layout);
         unsafe {
-            NonNull::new_unchecked(std::slice::from_raw_parts_mut(
+            NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
                 ptr.as_ptr() as *mut T,
                 len,
             ))
@@ -317,7 +317,7 @@ pub extern "C" fn rt_arena_with_capacity(chunk_size: usize) -> *mut Arena {
 /// Allocate bytes from arena
 #[no_mangle]
 pub extern "C" fn rt_arena_alloc(arena: &mut Arena, size: usize, align: usize) -> *mut u8 {
-    let layout = Layout::from_size_align(size, align.max(1).min(MAX_ALIGN))
+    let layout = Layout::from_size_align(size, align.clamp(1, MAX_ALIGN))
         .expect("Invalid layout");
     arena.alloc_layout(layout).as_ptr()
 }
@@ -329,12 +329,13 @@ pub extern "C" fn rt_arena_reset(arena: &mut Arena) {
 }
 
 /// Free arena
+///
+/// # Safety
+/// The pointer must have been allocated by `rt_arena_new` and must not be used after this call.
 #[no_mangle]
-pub extern "C" fn rt_arena_free(arena: *mut Arena) {
+pub unsafe extern "C" fn rt_arena_free(arena: *mut Arena) {
     if !arena.is_null() {
-        unsafe {
-            drop(Box::from_raw(arena));
-        }
+        drop(Box::from_raw(arena));
     }
 }
 

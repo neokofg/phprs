@@ -6,6 +6,8 @@
 //! This provides significant performance improvements for typical web workloads
 //! where most strings (HTTP headers, JSON keys, short values) are small.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 mod ops;
 
 use std::alloc::{alloc, dealloc, realloc, Layout};
@@ -467,12 +469,13 @@ pub extern "C" fn rt_string_clone(s: &SmartString) -> SmartString {
 }
 
 /// Drop a SmartString (free memory if heap-allocated).
+///
+/// # Safety
+/// The pointer must point to a valid SmartString and must not be used after this call.
 #[no_mangle]
-pub extern "C" fn rt_string_drop(s: *mut SmartString) {
+pub unsafe extern "C" fn rt_string_drop(s: *mut SmartString) {
     if !s.is_null() {
-        unsafe {
-            ptr::drop_in_place(s);
-        }
+        ptr::drop_in_place(s);
     }
 }
 

@@ -555,7 +555,7 @@ impl ClassRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Span;
+    use crate::ast::{Attributes, Span};
 
     fn make_class(name: &str, parent: Option<&str>) -> ClassDef {
         ClassDef {
@@ -570,6 +570,7 @@ mod tests {
             trait_uses: vec![],
             is_abstract: false,
             is_final: false,
+            attributes: Attributes::default(),
             span: Span::default(),
         }
     }

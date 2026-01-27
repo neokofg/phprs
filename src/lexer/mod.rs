@@ -90,4 +90,16 @@ function main() {
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Variable));
         assert!(tokens.iter().any(|t| t.kind == TokenKind::Integer));
     }
+
+    #[test]
+    fn test_attribute_token() {
+        let source = "<?php #[Route] function test() {}";
+        let tokens = tokenize(source).unwrap();
+        // Check that #[ is tokenized as HashBracket
+        assert!(
+            tokens.iter().any(|t| t.kind == TokenKind::HashBracket),
+            "Expected HashBracket token, got: {:?}",
+            tokens.iter().map(|t| (&t.kind, &t.text)).collect::<Vec<_>>()
+        );
+    }
 }

@@ -161,6 +161,36 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
                     }
                 }
             }
+
+            // Exception handling - TODO: implement with setjmp/longjmp or stack unwinding
+            StmtKind::TryCatch {
+                try_block,
+                catches: _,
+                finally_block,
+            } => {
+                // For now, just execute try block directly (no actual exception handling)
+                for s in try_block {
+                    self.compile_stmt(s)?;
+                    if self.terminated {
+                        break;
+                    }
+                }
+                // Execute finally block if present
+                if let Some(finally_stmts) = finally_block {
+                    for s in finally_stmts {
+                        self.compile_stmt(s)?;
+                        if self.terminated {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            StmtKind::Throw(expr) => {
+                // TODO: implement actual throw mechanism
+                // For now, just evaluate the expression and do nothing
+                self.compile_expr(expr)?;
+            }
         }
 
         Ok(())
@@ -376,6 +406,28 @@ impl<'a, 'b> FunctionCompiler<'a, 'b> {
             } => self.compile_static_property_assign_expr(class_name, property, value),
             ExprKind::ArrayLit(elements) => self.compile_array_lit(elements),
             ExprKind::ArrayAccess { array, index } => self.compile_array_access(array, index),
+
+            // Closures - TODO: full implementation with function pointers and captures
+            ExprKind::Closure { .. } => {
+                // Closures are parsed but codegen is not yet implemented
+                // Return a placeholder null pointer for now
+                let ptr_ty = self.module.target_config().pointer_type();
+                Ok(self.builder.ins().iconst(ptr_ty, 0))
+            }
+            ExprKind::ClosureCall { closure, args } => {
+                // Compile closure expression (should be a function pointer)
+                let _closure_ptr = self.compile_expr(closure)?;
+
+                // Compile arguments
+                for arg in args {
+                    self.compile_expr(arg)?;
+                }
+
+                // TODO: indirect call through function pointer
+                // For now return placeholder
+                let ptr_ty = self.module.target_config().pointer_type();
+                Ok(self.builder.ins().iconst(ptr_ty, 0))
+            }
         }
     }
 

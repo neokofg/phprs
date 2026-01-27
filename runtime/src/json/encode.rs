@@ -5,6 +5,8 @@
 //! - Pre-computed field offsets for known types
 //! - Minimal allocations
 
+#![allow(dead_code)]
+
 use crate::array::{ArrayKey, PhpArray, PhpValue};
 use crate::SmartString;
 

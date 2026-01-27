@@ -357,12 +357,13 @@ pub extern "C" fn rt_array_set_int(arr: &mut PhpArray, key: i64, value: PhpValue
 }
 
 /// Free array
+///
+/// # Safety
+/// The pointer must have been allocated by `rt_array_new` and must not be used after this call.
 #[no_mangle]
-pub extern "C" fn rt_array_free(arr: *mut PhpArray) {
+pub unsafe extern "C" fn rt_array_free(arr: *mut PhpArray) {
     if !arr.is_null() {
-        unsafe {
-            drop(Box::from_raw(arr));
-        }
+        drop(Box::from_raw(arr));
     }
 }
 

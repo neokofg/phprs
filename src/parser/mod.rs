@@ -7,7 +7,9 @@ mod expr;
 mod namespace;
 mod stmt;
 
-use crate::ast::{CompilationUnit, Function, Param, Program, Span, Type};
+use crate::ast::{
+    Attribute, AttributeArg, Attributes, CompilationUnit, Function, Param, Program, Span, Type,
+};
 use crate::errors::CompileError;
 use crate::lexer::{SpannedToken, TokenKind};
 use miette::Result;
@@ -112,15 +114,18 @@ impl Parser {
         let mut top_level_stmts = Vec::new();
 
         while !self.check(TokenKind::Eof) {
+            // Parse attributes if present
+            let attrs = self.parse_attributes()?;
+
             match self.peek() {
                 TokenKind::Fn => {
-                    functions.push(self.parse_function()?);
+                    functions.push(self.parse_function_with_attrs(attrs)?);
                 }
                 TokenKind::Class | TokenKind::Abstract | TokenKind::Final => {
-                    classes.push(self.parse_class()?);
+                    classes.push(self.parse_class_with_attrs(attrs)?);
                 }
                 TokenKind::Trait => {
-                    traits.push(self.parse_trait()?);
+                    traits.push(self.parse_trait_with_attrs(attrs)?);
                 }
                 TokenKind::Interface => {
                     return Err(CompileError::ParserError {
@@ -152,6 +157,13 @@ impl Parser {
                 | TokenKind::Return
                 | TokenKind::LBrace
                 | TokenKind::Identifier => {
+                    if !attrs.is_empty() {
+                        return Err(CompileError::ParserError {
+                            message: "Attributes cannot be applied to statements".to_string(),
+                            span: self.current().span,
+                        }
+                        .into());
+                    }
                     top_level_stmts.push(self.parse_stmt()?);
                 }
                 _ => {
@@ -180,6 +192,7 @@ impl Parser {
                 params: vec![],
                 return_type: Type::Void,
                 body: top_level_stmts,
+                attributes: Attributes::default(),
                 span: Span::default(),
             };
             functions.push(main_fn);
@@ -202,9 +215,75 @@ impl Parser {
         Ok(Program::from_unit(unit))
     }
 
+    // === Attribute parsing ===
+
+    /// Parse a sequence of attributes: #[Attr1] #[Attr2(arg)]
+    fn parse_attributes(&mut self) -> Result<Attributes> {
+        let mut attrs = Attributes::new();
+
+        while self.check(TokenKind::HashBracket) {
+            attrs.push(self.parse_attribute()?);
+        }
+
+        Ok(attrs)
+    }
+
+    /// Parse single attribute: #[Name(arg1, key: value)]
+    fn parse_attribute(&mut self) -> Result<Attribute> {
+        let start = self.span();
+        self.expect(TokenKind::HashBracket)?;
+
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = name_token.text.clone();
+
+        let args = if self.match_token(TokenKind::LParen) {
+            let args = self.parse_attribute_args()?;
+            self.expect(TokenKind::RParen)?;
+            args
+        } else {
+            Vec::new()
+        };
+
+        let end = self.span();
+        self.expect(TokenKind::RBracket)?;
+
+        Ok(Attribute::new(name, args, start.merge(end)))
+    }
+
+    /// Parse attribute arguments: (arg1, arg2, key: value)
+    fn parse_attribute_args(&mut self) -> Result<Vec<AttributeArg>> {
+        let mut args = Vec::new();
+
+        if self.check(TokenKind::RParen) {
+            return Ok(args);
+        }
+
+        loop {
+            // Check for named argument: identifier followed by colon
+            if self.check(TokenKind::Identifier) && self.peek_ahead(1) == TokenKind::Colon {
+                let name_token = self.advance().clone();
+                let name = name_token.text;
+                self.advance(); // skip colon
+                let value = self.parse_expr()?;
+                args.push(AttributeArg::Named(name, value));
+            } else {
+                // Positional argument
+                let value = self.parse_expr()?;
+                args.push(AttributeArg::Positional(value));
+            }
+
+            if !self.match_token(TokenKind::Comma) {
+                break;
+            }
+        }
+
+        Ok(args)
+    }
+
     // === Function parsing ===
 
-    fn parse_function(&mut self) -> Result<Function> {
+    /// Parse function with optional attributes
+    fn parse_function_with_attrs(&mut self, attributes: Attributes) -> Result<Function> {
         let start = self.span();
         self.expect(TokenKind::Fn)?;
 
@@ -231,8 +310,14 @@ impl Parser {
             params,
             return_type,
             body,
+            attributes,
             span: start.merge(end),
         })
+    }
+
+    #[allow(dead_code)]
+    fn parse_function(&mut self) -> Result<Function> {
+        self.parse_function_with_attrs(Attributes::new())
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {
@@ -363,6 +448,100 @@ function main() {
     #[test]
     fn test_parse_binary_expr() {
         let source = "<?php function main() { $x: int = 1 + 2 * 3; }";
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_arrow_closure() {
+        let source = r#"<?php function main() { $f = fn($x: int): int => $x + 1; }"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_full_closure() {
+        let source = r#"<?php
+function main() {
+    $y: int = 10;
+    $f = function($x: int) use ($y): int {
+        return $x + $y;
+    };
+}"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_closure_with_ref_capture() {
+        let source = r#"<?php
+function main() {
+    $counter: int = 0;
+    $inc = function() use (&$counter): void {
+        $counter = $counter + 1;
+    };
+}"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_try_catch() {
+        let source = r#"<?php
+function main() {
+    try {
+        echo "try";
+    } catch (Exception $e) {
+        echo "catch";
+    }
+}"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_try_catch_finally() {
+        let source = r#"<?php
+function main() {
+    try {
+        echo "try";
+    } catch (Exception $e) {
+        echo "catch";
+    } finally {
+        echo "finally";
+    }
+}"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_multi_catch() {
+        let source = r#"<?php
+function main() {
+    try {
+        echo "risky";
+    } catch (InvalidArgumentException|RuntimeException $e) {
+        echo "caught";
+    }
+}"#;
+        let tokens = tokenize(source).unwrap();
+        let program = parse(tokens).unwrap();
+        assert_eq!(program.functions.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_throw() {
+        let source = r#"<?php
+function main() {
+    throw $e;
+}"#;
         let tokens = tokenize(source).unwrap();
         let program = parse(tokens).unwrap();
         assert_eq!(program.functions.len(), 1);

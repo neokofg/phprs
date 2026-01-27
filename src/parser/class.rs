@@ -1,6 +1,6 @@
 //! Class and trait parsing
 
-use crate::ast::{ClassDef, Method, Property, TraitDef, Type, Visibility};
+use crate::ast::{Attributes, ClassDef, Method, Property, TraitDef, Type, Visibility};
 use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;
@@ -8,7 +8,12 @@ use miette::Result;
 use super::Parser;
 
 impl Parser {
+    #[allow(dead_code)]
     pub(super) fn parse_class(&mut self) -> Result<ClassDef> {
+        self.parse_class_with_attrs(Attributes::default())
+    }
+
+    pub(super) fn parse_class_with_attrs(&mut self, attributes: Attributes) -> Result<ClassDef> {
         let start = self.span();
 
         let is_abstract = self.match_token(TokenKind::Abstract);
@@ -84,12 +89,18 @@ impl Parser {
             trait_uses,
             is_abstract,
             is_final,
+            attributes,
             span: start.merge(end),
         })
     }
 
     /// Parse a trait definition
+    #[allow(dead_code)]
     pub(super) fn parse_trait(&mut self) -> Result<TraitDef> {
+        self.parse_trait_with_attrs(Attributes::default())
+    }
+
+    pub(super) fn parse_trait_with_attrs(&mut self, attributes: Attributes) -> Result<TraitDef> {
         let start = self.span();
 
         self.expect(TokenKind::Trait)?;
@@ -120,12 +131,16 @@ impl Parser {
             qualified_name: None, // Will be set by resolver
             properties,
             methods,
+            attributes,
             span: start.merge(end),
         })
     }
 
     fn parse_class_member(&mut self) -> Result<(Option<Property>, Option<Method>)> {
         let start = self.span();
+
+        // Parse member attributes first
+        let attributes = self.parse_attributes()?;
 
         // Parse modifiers in any order: abstract, final, static, visibility
         let mut visibility = Visibility::Public;
@@ -173,9 +188,9 @@ impl Parser {
         }
 
         if self.check(TokenKind::Fn) {
-            self.parse_method(start, visibility, is_static, is_abstract, is_final)
+            self.parse_method(start, visibility, is_static, is_abstract, is_final, attributes)
         } else if self.check(TokenKind::Variable) {
-            self.parse_property(start, visibility, is_static)
+            self.parse_property(start, visibility, is_static, attributes)
         } else {
             Err(CompileError::ParserError {
                 message: format!("Expected property or method, found {:?}", self.peek()),
@@ -192,6 +207,7 @@ impl Parser {
         is_static: bool,
         is_abstract: bool,
         is_final: bool,
+        attributes: Attributes,
     ) -> Result<(Option<Property>, Option<Method>)> {
         self.advance(); // consume 'fn'
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -230,6 +246,7 @@ impl Parser {
                 is_abstract,
                 is_final,
                 body,
+                attributes,
                 span: start.merge(self.span()),
             }),
         ))
@@ -240,6 +257,7 @@ impl Parser {
         start: crate::ast::Span,
         visibility: Visibility,
         is_static: bool,
+        attributes: Attributes,
     ) -> Result<(Option<Property>, Option<Method>)> {
         let var_token = self.expect(TokenKind::Variable)?;
         let name = var_token.text[1..].to_string();
@@ -262,6 +280,7 @@ impl Parser {
                 visibility,
                 is_static,
                 default,
+                attributes,
                 span: start.merge(self.span()),
             }),
             None,

@@ -5,9 +5,10 @@
 use crate::SmartString;
 
 /// PHP value - dynamic type that can hold any PHP value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum PhpValue {
     /// null
+    #[default]
     Null,
     /// bool
     Bool(bool),
@@ -183,12 +184,6 @@ impl PhpValue {
             PhpValue::Array(arr) => Some(arr),
             _ => None,
         }
-    }
-}
-
-impl Default for PhpValue {
-    fn default() -> Self {
-        PhpValue::Null
     }
 }
 

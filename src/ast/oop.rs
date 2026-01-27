@@ -1,4 +1,4 @@
-use super::{QualifiedName, Span, Stmt, TraitUse, Type};
+use super::{Attributes, QualifiedName, Span, Stmt, TraitUse, Type};
 
 /// Visibility modifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,6 +28,8 @@ pub struct Property {
     pub visibility: Visibility,
     pub is_static: bool,
     pub default: Option<super::Expr>,
+    /// Attributes (e.g., #[Column("id")], #[Validate])
+    pub attributes: Attributes,
     pub span: Span,
 }
 
@@ -43,6 +45,8 @@ pub struct Method {
     pub is_abstract: bool,
     pub is_final: bool,
     pub body: Option<Vec<Stmt>>,
+    /// Attributes (e.g., #[Route], #[Middleware])
+    pub attributes: Attributes,
     pub span: Span,
 }
 
@@ -79,6 +83,8 @@ pub struct ClassDef {
     pub trait_uses: Vec<TraitUse>,
     pub is_abstract: bool,
     pub is_final: bool,
+    /// Attributes (e.g., #[Entity], #[Table("users")])
+    pub attributes: Attributes,
     pub span: Span,
 }
 
@@ -125,5 +131,7 @@ pub struct TraitDef {
     pub properties: Vec<Property>,
     /// Trait methods
     pub methods: Vec<Method>,
+    /// Attributes
+    pub attributes: Attributes,
     pub span: Span,
 }

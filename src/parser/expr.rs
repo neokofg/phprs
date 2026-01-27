@@ -1,6 +1,6 @@
 //! Expression parsing
 
-use crate::ast::{ArrayElement, BinaryOp, Expr, ExprKind, UnaryOp};
+use crate::ast::{ArrayElement, BinaryOp, Capture, ClosureBody, Expr, ExprKind, UnaryOp};
 use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;
@@ -175,6 +175,30 @@ impl Parser {
                         self.span(),
                     );
                 }
+                TokenKind::LParen => {
+                    // Closure call: $closure($args) or ($expr)($args)
+                    if matches!(
+                        expr.kind,
+                        ExprKind::Variable(_)
+                            | ExprKind::Closure { .. }
+                            | ExprKind::PropertyAccess { .. }
+                            | ExprKind::ArrayAccess { .. }
+                    ) {
+                        self.advance();
+                        let args = self.parse_call_args()?;
+                        self.expect(TokenKind::RParen)?;
+
+                        expr = Expr::new(
+                            ExprKind::ClosureCall {
+                                closure: Box::new(expr),
+                                args,
+                            },
+                            self.span(),
+                        );
+                    } else {
+                        break;
+                    }
+                }
                 _ => break,
             }
         }
@@ -316,6 +340,10 @@ impl Parser {
                 Ok(expr)
             }
             TokenKind::LBracket => self.parse_array_lit(start),
+            // Short closure: fn($x) => $x + 1
+            TokenKind::FnArrow => self.parse_arrow_closure(start),
+            // Full closure: function($x) use ($y) { return $x + $y; }
+            TokenKind::Fn => self.parse_full_closure(start),
             _ => Err(CompileError::ParserError {
                 message: format!("Unexpected token: {:?}", token.kind),
                 span: token.span,
@@ -459,5 +487,107 @@ impl Parser {
             ExprKind::ArrayLit(elements),
             start.merge(self.span()),
         ))
+    }
+
+    /// Parse arrow closure: fn($x) => $x + 1
+    fn parse_arrow_closure(&mut self, start: crate::ast::Span) -> Result<Expr> {
+        self.advance(); // consume 'fn'
+
+        // Check for static
+        let is_static = self.match_token(TokenKind::Static);
+
+        self.expect(TokenKind::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(TokenKind::RParen)?;
+
+        // Optional return type
+        let return_type = if self.match_token(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(TokenKind::FatArrow)?;
+        let body_expr = self.parse_expr()?;
+        let end = body_expr.span;
+
+        Ok(Expr::new(
+            ExprKind::Closure {
+                params,
+                return_type,
+                body: ClosureBody::Arrow(Box::new(body_expr)),
+                captures: Vec::new(), // Arrow closures auto-capture
+                is_static,
+            },
+            start.merge(end),
+        ))
+    }
+
+    /// Parse full closure: function($x) use ($y, &$z) { return $x + $y; }
+    fn parse_full_closure(&mut self, start: crate::ast::Span) -> Result<Expr> {
+        self.advance(); // consume 'function'
+
+        self.expect(TokenKind::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(TokenKind::RParen)?;
+
+        // Parse use clause: use ($x, &$y)
+        let captures = if self.match_token(TokenKind::Use) {
+            self.parse_captures()?
+        } else {
+            Vec::new()
+        };
+
+        // Optional return type
+        let return_type = if self.match_token(TokenKind::Colon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        self.expect(TokenKind::LBrace)?;
+        let body = self.parse_block_contents()?;
+        let end = self.span();
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(Expr::new(
+            ExprKind::Closure {
+                params,
+                return_type,
+                body: ClosureBody::Block(body),
+                captures,
+                is_static: false,
+            },
+            start.merge(end),
+        ))
+    }
+
+    /// Parse captures: ($x, &$y)
+    fn parse_captures(&mut self) -> Result<Vec<Capture>> {
+        self.expect(TokenKind::LParen)?;
+        let mut captures = Vec::new();
+
+        if !self.check(TokenKind::RParen) {
+            loop {
+                let start = self.span();
+                let by_ref = self.match_token(TokenKind::Ampersand);
+
+                let var_token = self.expect(TokenKind::Variable)?;
+                let name = var_token.text[1..].to_string();
+
+                captures.push(Capture {
+                    name,
+                    by_ref,
+                    span: start.merge(self.span()),
+                });
+
+                if !self.match_token(TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.expect(TokenKind::RParen)?;
+        Ok(captures)
     }
 }

@@ -1,15 +1,17 @@
+mod attribute;
 mod expr;
 mod namespace;
 mod oop;
 mod stmt;
 mod types;
 
-pub use expr::{ArrayElement, BinaryOp, Expr, ExprKind, UnaryOp};
+pub use attribute::{Attribute, AttributeArg, Attributes};
+pub use expr::{ArrayElement, BinaryOp, Capture, ClosureBody, Expr, ExprKind, UnaryOp};
 pub use namespace::{
     CompilationUnit, NamespaceDecl, QualifiedName, TraitUse, UseDecl, UseItem, UseKind,
 };
 pub use oop::{ClassDef, Method, Property, TraitDef, Visibility};
-pub use stmt::{Function, Param, Program, Stmt, StmtKind};
+pub use stmt::{CatchClause, Function, Param, Program, Stmt, StmtKind};
 pub use types::Type;
 
 /// Span information for error reporting

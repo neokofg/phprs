@@ -11,6 +11,10 @@ pub enum TokenKind {
     #[token("function")]
     Fn,
 
+    // Arrow function keyword (short closures)
+    #[token("fn")]
+    FnArrow,
+
     #[token("return")]
     Return,
 
@@ -89,6 +93,19 @@ pub enum TokenKind {
 
     #[token("use")]
     Use,
+
+    // Exception keywords
+    #[token("try")]
+    Try,
+
+    #[token("catch")]
+    Catch,
+
+    #[token("finally")]
+    Finally,
+
+    #[token("throw")]
+    Throw,
 
     #[token("namespace")]
     Namespace,
@@ -178,6 +195,9 @@ pub enum TokenKind {
     #[token("||")]
     Or,
 
+    #[token("|")]
+    Pipe,
+
     #[token("!")]
     Not,
 
@@ -217,6 +237,10 @@ pub enum TokenKind {
     #[token("=>")]
     FatArrow,
 
+    // Attributes
+    #[token("#[")]
+    HashBracket,
+
     // Delimiters
     #[token("(")]
     LParen,
@@ -246,9 +270,11 @@ pub enum TokenKind {
     Comma,
 
     // Comments
+    // Note: #[^\[] ensures # comments don't capture #[ (attribute start)
     #[regex(r"//[^\n]*")]
     #[regex(r"/\*[^*]*\*+(?:[^/*][^*]*\*+)*/")]
-    #[regex(r"#[^\n]*")]
+    #[regex(r"#[^\[\n][^\n]*")]
+    #[regex(r"#\n?", priority = 0)]
     Comment,
 
     // EOF marker (added manually)

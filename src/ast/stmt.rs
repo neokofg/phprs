@@ -1,4 +1,4 @@
-use super::{ClassDef, CompilationUnit, Expr, Span, TraitDef, Type};
+use super::{Attributes, ClassDef, CompilationUnit, Expr, Span, TraitDef, Type};
 
 /// A complete program (all files combined)
 #[derive(Debug, Clone)]
@@ -45,6 +45,8 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: Type,
     pub body: Vec<Stmt>,
+    /// Attributes attached to function (e.g., #[Route("GET", "/")])
+    pub attributes: Attributes,
     pub span: Span,
 }
 
@@ -120,4 +122,26 @@ pub enum StmtKind {
 
     /// Block of statements
     Block(Vec<Stmt>),
+
+    /// Try-catch-finally block
+    TryCatch {
+        try_block: Vec<Stmt>,
+        catches: Vec<CatchClause>,
+        finally_block: Option<Vec<Stmt>>,
+    },
+
+    /// Throw statement: throw $exception;
+    Throw(Expr),
+}
+
+/// Catch clause: `catch (ExceptionType $e) { ... }`
+#[derive(Debug, Clone)]
+pub struct CatchClause {
+    /// Exception types to catch (e.g., `Exception`, `InvalidArgumentException`)
+    pub exception_types: Vec<String>,
+    /// Variable to bind the exception to (e.g., $e)
+    pub variable: String,
+    /// Statements in the catch block
+    pub body: Vec<Stmt>,
+    pub span: Span,
 }

@@ -1,6 +1,7 @@
 //! Statement parsing
 
-use crate::ast::{BinaryOp, Stmt, StmtKind};
+use crate::ast::{BinaryOp, CatchClause, Stmt, StmtKind};
+use crate::errors::CompileError;
 use crate::lexer::TokenKind;
 use miette::Result;
 
@@ -23,6 +24,8 @@ impl Parser {
             TokenKind::For => self.parse_for(),
             TokenKind::Echo => self.parse_echo(),
             TokenKind::LBrace => self.parse_block(),
+            TokenKind::Try => self.parse_try_catch(),
+            TokenKind::Throw => self.parse_throw(),
             TokenKind::Variable => self.parse_variable_stmt(),
             _ => self.parse_expr_stmt(),
         }
@@ -260,5 +263,97 @@ impl Parser {
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semicolon)?;
         Ok(Stmt::new(StmtKind::Expr(expr), start.merge(self.span())))
+    }
+
+    /// Parse try-catch-finally: try { ... } catch (Exception $e) { ... } finally { ... }
+    fn parse_try_catch(&mut self) -> Result<Stmt> {
+        let start = self.span();
+        self.expect(TokenKind::Try)?;
+
+        // Parse try block
+        self.expect(TokenKind::LBrace)?;
+        let try_block = self.parse_block_contents()?;
+        self.expect(TokenKind::RBrace)?;
+
+        // Parse catch clauses
+        let mut catches = Vec::new();
+        while self.check(TokenKind::Catch) {
+            catches.push(self.parse_catch_clause()?);
+        }
+
+        // Parse optional finally block
+        let finally_block = if self.match_token(TokenKind::Finally) {
+            self.expect(TokenKind::LBrace)?;
+            let block = self.parse_block_contents()?;
+            self.expect(TokenKind::RBrace)?;
+            Some(block)
+        } else {
+            None
+        };
+
+        // Must have at least one catch or a finally
+        if catches.is_empty() && finally_block.is_none() {
+            return Err(CompileError::ParserError {
+                message: "try block must have at least one catch or finally clause".to_string(),
+                span: self.current().span,
+            }
+            .into());
+        }
+
+        Ok(Stmt::new(
+            StmtKind::TryCatch {
+                try_block,
+                catches,
+                finally_block,
+            },
+            start.merge(self.span()),
+        ))
+    }
+
+    /// Parse catch clause: catch (Exception $e) { ... } or catch (Exception|Error $e) { ... }
+    fn parse_catch_clause(&mut self) -> Result<CatchClause> {
+        let start = self.span();
+        self.expect(TokenKind::Catch)?;
+        self.expect(TokenKind::LParen)?;
+
+        // Parse exception types (can be multiple with |)
+        let mut exception_types = Vec::new();
+        loop {
+            let type_token = self.expect(TokenKind::Identifier)?;
+            exception_types.push(type_token.text.clone());
+
+            if !self.match_token(TokenKind::Pipe) {
+                break;
+            }
+        }
+
+        // Parse variable
+        let var_token = self.expect(TokenKind::Variable)?;
+        let variable = var_token.text[1..].to_string();
+
+        self.expect(TokenKind::RParen)?;
+
+        // Parse catch body
+        self.expect(TokenKind::LBrace)?;
+        let body = self.parse_block_contents()?;
+        self.expect(TokenKind::RBrace)?;
+
+        Ok(CatchClause {
+            exception_types,
+            variable,
+            body,
+            span: start.merge(self.span()),
+        })
+    }
+
+    /// Parse throw statement: throw $exception;
+    fn parse_throw(&mut self) -> Result<Stmt> {
+        let start = self.span();
+        self.expect(TokenKind::Throw)?;
+
+        let expr = self.parse_expr()?;
+        self.expect(TokenKind::Semicolon)?;
+
+        Ok(Stmt::new(StmtKind::Throw(expr), start.merge(self.span())))
     }
 }

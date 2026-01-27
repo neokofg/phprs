@@ -1,4 +1,4 @@
-use super::{Span, Type};
+use super::{Param, Span, Stmt, Type};
 
 /// Expression node
 #[derive(Debug, Clone)]
@@ -126,6 +126,23 @@ pub enum ExprKind {
 
     /// Array access: `$arr[0]` or `$arr["key"]`
     ArrayAccess { array: Box<Expr>, index: Box<Expr> },
+
+    /// Closure/anonymous function
+    /// Short: fn($x) => $x + 1
+    /// Full: function($x) use ($y) { return $x + $y; }
+    Closure {
+        params: Vec<Param>,
+        return_type: Option<Type>,
+        body: ClosureBody,
+        captures: Vec<Capture>,
+        is_static: bool,
+    },
+
+    /// Closure call: $closure($args)
+    ClosureCall {
+        closure: Box<Expr>,
+        args: Vec<Expr>,
+    },
 }
 
 /// Array element (for array literals)
@@ -227,4 +244,23 @@ impl std::fmt::Display for UnaryOp {
             Self::Dec => write!(f, "--"),
         }
     }
+}
+
+/// Closure body - either an expression (arrow) or block
+#[derive(Debug, Clone)]
+pub enum ClosureBody {
+    /// Arrow expression: fn($x) => $x + 1
+    Arrow(Box<Expr>),
+    /// Block body: function($x) { return $x + 1; }
+    Block(Vec<Stmt>),
+}
+
+/// Variable capture in closure
+#[derive(Debug, Clone)]
+pub struct Capture {
+    /// Variable name (without $)
+    pub name: String,
+    /// Whether captured by reference (&$x)
+    pub by_ref: bool,
+    pub span: Span,
 }

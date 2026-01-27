@@ -256,6 +256,43 @@ impl OwnershipChecker {
                 }
                 self.pop_scope();
             }
+
+            StmtKind::TryCatch {
+                try_block,
+                catches,
+                finally_block,
+            } => {
+                // Check try block
+                self.push_scope();
+                for s in try_block {
+                    self.check_stmt(s)?;
+                }
+                self.pop_scope();
+
+                // Check catch clauses
+                for catch in catches {
+                    self.push_scope();
+                    // Define exception variable
+                    self.define_var(&catch.variable, Type::Class("Exception".to_string()), catch.span);
+                    for s in &catch.body {
+                        self.check_stmt(s)?;
+                    }
+                    self.pop_scope();
+                }
+
+                // Check finally block
+                if let Some(finally_stmts) = finally_block {
+                    self.push_scope();
+                    for s in finally_stmts {
+                        self.check_stmt(s)?;
+                    }
+                    self.pop_scope();
+                }
+            }
+
+            StmtKind::Throw(expr) => {
+                self.check_expr(expr, true)?;
+            }
         }
 
         Ok(())
@@ -419,6 +456,36 @@ impl OwnershipChecker {
             ExprKind::ArrayAccess { array, index } => {
                 self.check_expr(array, false)?;
                 self.check_expr(index, false)?;
+            }
+
+            ExprKind::Closure {
+                body, captures, ..
+            } => {
+                // Check captured variables
+                for capture in captures {
+                    self.check_var_use(&capture.name, capture.span)?;
+                }
+
+                // Check closure body in new scope
+                self.push_scope();
+                match body {
+                    crate::ast::ClosureBody::Arrow(expr) => {
+                        self.check_expr(expr, false)?;
+                    }
+                    crate::ast::ClosureBody::Block(stmts) => {
+                        for stmt in stmts {
+                            self.check_stmt(stmt)?;
+                        }
+                    }
+                }
+                self.pop_scope();
+            }
+
+            ExprKind::ClosureCall { closure, args } => {
+                self.check_expr(closure, false)?;
+                for arg in args {
+                    self.check_expr(arg, true)?;
+                }
             }
         }
 
