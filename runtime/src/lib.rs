@@ -12,6 +12,7 @@ pub mod http;
 pub mod intern;
 pub mod json;
 pub mod math;
+pub mod simd;
 pub mod string;
 pub mod types;
 

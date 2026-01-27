@@ -373,6 +373,7 @@ impl CodeGen {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn declare_runtime_functions(&mut self) -> Result<()> {
         let ptr_type = self.module.target_config().pointer_type();
 

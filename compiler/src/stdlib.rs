@@ -77,6 +77,7 @@ fn intrinsic(
 }
 
 /// String functions - using runtime C-string wrappers
+#[allow(clippy::too_many_lines)]
 fn string_functions() -> Vec<Function> {
     vec![
         // Use runtime strlen (via C-string wrapper)

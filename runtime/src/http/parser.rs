@@ -3,6 +3,7 @@
 use super::headers::Headers;
 use super::method::Method;
 use super::request::Request;
+use crate::simd::{find_crlf, memchr};
 
 /// HTTP Parse Error
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,25 +212,6 @@ impl Default for HttpParser {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Find \r\n in buffer
-#[inline]
-fn find_crlf(buf: &[u8]) -> Option<usize> {
-    let mut i = 0;
-    while i + 1 < buf.len() {
-        if buf[i] == b'\r' && buf[i + 1] == b'\n' {
-            return Some(i);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Find byte in buffer (simple memchr)
-#[inline]
-fn memchr(needle: u8, haystack: &[u8]) -> Option<usize> {
-    haystack.iter().position(|&b| b == needle)
 }
 
 /// Convenience function: parse request from buffer
