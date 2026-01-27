@@ -32,6 +32,10 @@ harness = false
 name = "json_bench"
 harness = false
 
+[[bench]]
+name = "http_bench"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
